@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Comparing summaries</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./app.css" />
+    <script src="./config.js"></script>
+    <script type="module" src="./backend.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Comparing summaries home">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span></span>
+        <span>Comparing summaries</span>
+      </a>
+      <span id="mode-badge" class="badge" hidden></span>
+      <div id="account-actions" class="account-actions" hidden>
+        <span id="participant-label" class="participant-label"></span>
+        <button id="instructions-button" class="button quiet" type="button">Instructions</button>
+        <button id="export-button" class="button quiet" type="button">Download my responses</button>
+        <button id="rotate-recovery-button" class="button quiet" type="button">Replace recovery code</button>
+        <button id="switch-participant-button" class="button quiet" type="button">Switch participant</button>
+      </div>
+    </header>
+
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+    <main id="login-view" class="entry-view" hidden>
+      <section class="entry-card">
+        <p class="eyebrow">Independent human assessment</p>
+        <h1>A careful comparison,<br />one document at a time.</h1>
+        <p class="entry-description">Read a source and two anonymous summaries. Select A, B, or Tie on each criterion. No written explanations are needed.</p>
+        <p id="entry-status" class="local-note" role="status"></p>
+        <form id="enroll-form" class="login-form">
+          <label for="participant-name">Display nickname</label>
+          <input id="participant-name" name="display_name" type="text" maxlength="80" autocomplete="nickname" required placeholder="Choose a nickname (1–40 characters)" />
+          <button id="enroll-button" class="button primary" type="submit">Start a new annotation workspace <span aria-hidden="true">&rarr;</span></button>
+        </form>
+        <details class="recovery-entry">
+          <summary>Recover progress with a recovery code</summary>
+          <form id="recover-form" class="login-form">
+            <label for="recovery-input">Existing private recovery code</label>
+            <input id="recovery-input" name="recovery_code" type="password" autocomplete="off" autocapitalize="characters" spellcheck="false" required placeholder="SAL-…" />
+            <button id="recover-button" class="button secondary" type="submit">Recover progress</button>
+          </form>
+        </details>
+        <div id="captcha-widget" class="captcha-widget" hidden></div>
+        <p class="local-note">Your nickname is only a display label. Progress is saved to a private anonymous account and resumes in this browser. Keep your recovery code private; it is needed to move progress to another device.</p>
+      </section>
+    </main>
+
+    <main id="recovery-view" class="entry-view" hidden>
+      <section class="entry-card recovery-card">
+        <p class="eyebrow">Private access key</p>
+        <h1>Save your recovery code</h1>
+        <p class="entry-description">This code is the only way to recover this workspace on another device. It is shown only here and is not sent back by the server. Keep it somewhere private.</p>
+        <code id="recovery-code-display" class="recovery-code-display"></code>
+        <div class="recovery-actions">
+          <button id="download-recovery-code" class="button secondary" type="button">Download recovery code</button>
+          <label class="recovery-confirm"><input id="recovery-saved-check" type="checkbox" /> I have saved this code somewhere private.</label>
+        </div>
+        <button id="continue-after-recovery" class="button primary full-width" type="button" disabled>Continue to instructions</button>
+      </section>
+    </main>
+
+    <main id="recovery-pending-view" class="entry-view" hidden>
+      <section class="entry-card">
+        <p class="eyebrow">Recovery code verification</p>
+        <h1>Confirming your private code</h1>
+        <p id="recovery-pending-message" class="entry-description">The service has not yet confirmed this code. Keep this browser open and retry; do not discard the local recovery backup.</p>
+        <button id="retry-recovery-operation" class="button primary full-width" type="button">Retry confirmation</button>
+      </section>
+    </main>
+
+    <main id="intro-view" class="intro-view" hidden>
+      <section class="reading-card">
+        <p class="eyebrow">Before you start</p>
+        <h1>Annotation instructions</h1>
+        <p class="muted">The first four preferences are submitted before the reference is shown. Please read the instructions before continuing.</p>
+        <div id="intro-guide" class="guide-copy"></div>
+        <div class="acknowledgement">
+          <label><input id="guide-ack" type="checkbox" /> I have read the annotation instructions.</label>
+          <button id="begin-button" class="button primary" type="button" disabled>Continue to workspace <span aria-hidden="true">&rarr;</span></button>
+        </div>
+      </section>
+    </main>
+
+    <main id="workspace" class="workspace" hidden>
+      <aside class="sidebar" aria-label="Your assignments">
+        <div class="sidebar-heading"><p class="eyebrow">Your workspace</p><h2>Comparisons</h2></div>
+        <div class="queue-tabs" role="group" aria-label="Assignment group">
+          <button id="study-tab" class="queue-tab" type="button">Study <span id="study-total">126</span></button>
+          <button id="practice-tab" class="queue-tab" type="button">Practice <span id="practice-total">8</span></button>
+        </div>
+        <div class="progress-block">
+          <div class="progress-caption"><span id="progress-label"></span><span id="progress-percent"></span></div>
+          <progress id="progress-bar" value="0" max="126" aria-label="Completed comparisons"></progress>
+        </div>
+        <p id="queue-note" class="queue-note"></p>
+        <button id="resume-button" class="button secondary full-width" type="button">Resume next comparison</button>
+        <label class="filter-toggle"><input id="unfinished-only" type="checkbox" checked /> Show unfinished only</label>
+        <div id="task-list" class="task-list" role="list" aria-label="Comparison list"></div>
+        <p class="sidebar-footnote">A saved draft can be resumed later. Locked answers cannot be changed.</p>
+      </aside>
+
+      <section id="workbench" class="workbench" aria-label="Current comparison">
+        <div id="empty-state" class="empty-state" hidden>
+          <span class="empty-symbol" aria-hidden="true">&#10003;</span>
+          <h1 id="empty-heading">Choose a comparison</h1>
+          <p id="empty-description"></p>
+          <button id="empty-action" class="button primary" type="button" hidden>Continue</button>
+        </div>
+
+        <div id="comparison-view" hidden>
+          <div class="comparison-heading">
+            <div><p id="task-kind" class="eyebrow"></p><h1 id="task-title">Comparison</h1></div>
+            <span id="task-state" class="badge"></span>
+          </div>
+          <div class="stage-strip" aria-label="Evaluation stages">
+            <div id="stage-one-step" class="stage-step"><span>1</span><div><strong>Source-based assessment</strong><small>Four preferences</small></div></div>
+            <div class="stage-divider" aria-hidden="true"></div>
+            <div id="stage-two-step" class="stage-step"><span>2</span><div><strong>Reference coverage</strong><small>One preference</small></div></div>
+          </div>
+          <p id="stage-message" class="stage-message"></p>
+          <section class="request-card" aria-labelledby="request-heading">
+            <h2 id="request-heading">Summarisation request</h2>
+            <p class="request-association">This request applies to the source document in the source panel.</p>
+            <div id="request-text" class="document-copy"></div>
+          </section>
+
+          <div class="comparison-grid">
+            <section class="source-panel panel" aria-labelledby="source-heading">
+              <div class="panel-heading source-panel-heading">
+                <h2 id="source-heading">Source document</h2>
+                <div class="source-view-controls" role="group" aria-label="Source display mode">
+                  <button id="source-reading-view" class="source-view-button" type="button" aria-pressed="true">Reading view</button>
+                  <button id="source-original-view" class="source-view-button" type="button" aria-pressed="false">Original text</button>
+                </div>
+              </div>
+              <p class="source-view-description"><strong>Reading aid.</strong> <span id="source-view-description">Grey blocks and spacing help you follow the document structure and make reading easier, without changing its content. Select Original text to see the unchanged stored source.</span></p>
+              <div class="source-search">
+                <label class="sr-only" for="source-search">Find in source</label>
+                <input id="source-search" type="search" placeholder="Find in source..." autocomplete="off" />
+                <span id="search-count" class="search-count" aria-live="polite"></span>
+                <button id="search-previous" class="search-arrow" type="button" aria-label="Previous match">&#8593;</button>
+                <button id="search-next" class="search-arrow" type="button" aria-label="Next match">&#8595;</button>
+              </div>
+              <div id="source-text" class="document-copy source-text" tabindex="0" aria-label="Source document text"><div id="source-content" class="source-content"></div></div>
+            </section>
+
+            <div class="assessment-panel">
+              <section id="reference-panel" class="panel reference-panel" aria-labelledby="reference-heading" hidden>
+                <div class="panel-heading"><h2 id="reference-heading">Human-written reference</h2><span class="small-label">Stage 2</span></div>
+                <div id="reference-text" class="document-copy reference-text"></div>
+                <button id="reference-retry" class="button secondary" type="button" hidden>Try loading the reference again</button>
+              </section>
+              <div class="summaries-grid">
+                <section class="panel summary-panel" aria-labelledby="summary-a-heading"><div class="panel-heading"><h2 id="summary-a-heading"><span class="letter-label">A</span> Summary A</h2></div><div id="summary-a" class="document-copy summary-text"></div></section>
+                <section class="panel summary-panel" aria-labelledby="summary-b-heading"><div class="panel-heading"><h2 id="summary-b-heading"><span class="letter-label">B</span> Summary B</h2></div><div id="summary-b" class="document-copy summary-text"></div></section>
+              </div>
+              <details class="shared-guidance"><summary>General evaluation instructions and choice definitions</summary><div id="shared-guidance-copy"></div></details>
+              <div id="reference-guidance" class="reference-guidance" hidden></div>
+              <form id="criteria-form" class="criteria-form" aria-label="Your preferences"></form>
+              <div id="paused-message" class="paused-message" hidden>This comparison has been paused for review. Your saved work is retained. You can continue with another comparison.</div>
+              <div class="action-bar">
+      <div class="save-state"><span id="save-dot" class="save-dot"></span><span id="save-label" aria-live="polite">Saved</span><button id="retry-save" class="text-button" type="button" hidden>Retry save</button><button id="reload-state" class="text-button" type="button" hidden>Reload saved state</button></div>
+                <div class="action-buttons"><button id="problem-button" class="button quiet" type="button">Report a problem</button><button id="pause-button" class="button secondary" type="button">Save and pause</button><button id="primary-action" class="button primary" type="button">Review Stage 1</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="guide-dialog" class="guide-dialog"><div class="dialog-heading"><h2>Annotation instructions</h2><button id="close-guide" class="button quiet" type="button">Close</button></div><div id="dialog-guide" class="guide-copy"></div></dialog>
+
+    <dialog id="review-dialog"><p class="eyebrow">Review before continuing</p><h2>Lock your first four answers?</h2><p>You are about to submit your four source-based judgments. The next screen will show a reference summary. You will not be able to change these four answers afterwards. Please check them before continuing.</p><dl id="review-answers" class="review-answers"></dl><div class="dialog-actions"><button id="review-back" class="button secondary" type="button">Back to edit</button><button id="confirm-lock" class="button primary" type="button">Lock answers and show reference</button></div></dialog>
+
+    <dialog id="problem-dialog"><p class="eyebrow">Separate from your preferences</p><h2>Report a problem</h2><p>No preference will be inferred from this report. Your existing saved answers will be retained.</p><label for="problem-category">Problem category</label><select id="problem-category"><option value="">Choose a category</option><option value="text_missing_or_unreadable">Text missing or unreadable</option><option value="materials_appear_mismatched">Materials appear mismatched</option><option value="cannot_interpret_material_reliably">Cannot interpret the material reliably</option><option value="accidental_selection_after_submission">Accidental selection after submission</option><option value="other_interface_problem">Other interface problem</option></select><fieldset id="problem-criteria"><legend>Affected criteria</legend></fieldset><div class="dialog-actions"><button id="problem-cancel" class="button secondary" type="button">Cancel</button><button id="problem-submit" class="button primary" type="button">Send report</button></div></dialog>
+
+    <dialog id="pause-dialog"><p class="eyebrow">Progress saved</p><h2>You can take a break.</h2><p>Your saved progress is stored privately in this browser's anonymous account. Use the same browser to resume; use your private recovery code to move progress to another device. Locking remains in effect.</p><div class="dialog-actions"><button id="pause-download" class="button secondary" type="button">Download my responses</button><button id="pause-resume" class="button primary" type="button">Resume</button></div></dialog>
+
+    <dialog id="switch-dialog"><p class="eyebrow">Switch participant</p><h2>Leave this workspace?</h2><p>Switching signs this browser out of the current anonymous account. You can return to this progress only with its recovery code. Make sure you have saved the code privately before switching.</p><label class="recovery-confirm"><input id="switch-recovery-check" type="checkbox" /> I have saved the current recovery code and want to switch participants.</label><div class="dialog-actions"><button id="switch-cancel" class="button secondary" type="button">Cancel</button><button id="switch-confirm" class="button primary" type="button" disabled>Save and switch</button></div></dialog>
+
+    <dialog id="rotate-dialog"><p class="eyebrow">Replace recovery code</p><h2>Make a new private code?</h2><p>The current recovery code will stop working as soon as the replacement is confirmed. Keep this browser open and save the new code before continuing.</p><div class="dialog-actions"><button id="rotate-cancel" class="button secondary" type="button">Cancel</button><button id="rotate-confirm" class="button primary" type="button">Create replacement</button></div></dialog>
+
+    <dialog id="identity-changed-dialog"><p class="eyebrow">This tab is paused</p><h2>The participant session changed</h2><p id="identity-changed-message">This tab is pinned to its original participant. Its queued changes will not be sent under a different sign-in. The workspace may also have been recovered on another device, which removes this browser's access. Reload only if you want to continue with the participant currently active in this browser. Unsaved selections in this tab may be lost.</p><div class="dialog-actions"><button id="identity-reload" class="button primary" type="button">Reload with current participant</button></div></dialog>
+
+    <noscript>This annotation interface requires JavaScript. Enable JavaScript and reload this page.</noscript>
+  </body>
+</html>
