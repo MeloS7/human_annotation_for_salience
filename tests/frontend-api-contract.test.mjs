@@ -13,8 +13,12 @@ import {
   STAGE_TWO_IDS,
   allStageChoicesPresent,
   criteriaForStage,
+  displayAssignmentNumber,
   mayRequestReference,
+  practiceProtocolReady,
+  REQUIRED_STUDY_COUNT,
   stageOf,
+  studyGateOpen,
 } from "../web/stage-state.js";
 
 const CONFIG = { supabaseUrl: "https://project-ref.supabase.co", publishableKey: "sb_publishable_test-key" };
@@ -103,4 +107,50 @@ test("stage helpers expose exactly four Stage 1 choices and one reference-only S
   assert.equal(allStageChoicesPresent({ stage: 1 }, { source_coverage: "A", readability: "B" }), false);
   assert.equal(allStageChoicesPresent({ stage: 2, locked_at: "now" }, { reference_coverage: "Tie" }), true);
   assert.equal(allStageChoicesPresent({ stage: 2, locked_at: "now" }, { reference_coverage: "C" }), false);
+});
+
+test("two-practice protocol requires the backend marker, total, and exactly two active tasks", () => {
+  const session = {
+    progress: { study_total: REQUIRED_STUDY_COUNT, practice_total: 2, practice_completed: 0, practice_requirement: 2 },
+    tasks: [
+      { id: "practice-old-3", kind: "practice", position: 3 },
+      { id: "practice-old-7", kind: "practice", position: 7 },
+      ...Array.from({ length: REQUIRED_STUDY_COUNT }, (_, index) => ({ id: `study-${index + 1}`, kind: "study", position: index + 1 })),
+    ],
+  };
+  assert.equal(practiceProtocolReady(session), true);
+  assert.equal(studyGateOpen(session), false);
+  const completedSession = {
+    ...session,
+    progress: { ...session.progress, practice_completed: 2 },
+    tasks: session.tasks.map((task) => task.kind === "practice" ? { ...task, status: "complete" } : task),
+  };
+  assert.equal(studyGateOpen(completedSession), true);
+
+  for (const incompatible of [
+    { ...session, progress: { ...session.progress, practice_requirement: undefined } },
+    { ...session, progress: { ...session.progress, practice_requirement: 8 } },
+    { ...session, progress: { ...session.progress, practice_total: 8 } },
+    { ...session, progress: { ...session.progress, study_total: 125 } },
+    { ...session, tasks: [...session.tasks, { id: "practice-old-8", kind: "practice", position: 8 }] },
+    { ...session, tasks: [...session.tasks, { id: "unexpected", kind: "other", position: 1 }] },
+    { ...session, tasks: session.tasks.filter((task) => task.kind !== "practice" || task.id !== "practice-old-7") },
+    { ...session, tasks: session.tasks.filter((task) => task.kind !== "study" || task.id !== "study-126") },
+  ]) {
+    assert.equal(practiceProtocolReady(incompatible), false);
+    assert.equal(studyGateOpen({ ...incompatible, progress: { ...incompatible.progress, practice_completed: 2 } }), false);
+  }
+  assert.equal(studyGateOpen({ ...completedSession, tasks: completedSession.tasks.map((task) => task.kind === "practice" ? { ...task, status: "draft" } : task) }), false);
+});
+
+test("practice display numbering follows the selected queue without changing source positions", () => {
+  const tasks = [
+    { id: "practice-old-7", kind: "practice", position: 7 },
+    { id: "study-4", kind: "study", position: 4 },
+    { id: "practice-old-3", kind: "practice", position: 3 },
+  ];
+  assert.equal(displayAssignmentNumber(tasks[0], tasks), 2);
+  assert.equal(displayAssignmentNumber(tasks[2], tasks), 1);
+  assert.equal(displayAssignmentNumber(tasks[1], tasks), 4);
+  assert.equal(displayAssignmentNumber({ id: "missing", kind: "practice", position: 5 }, tasks), null);
 });

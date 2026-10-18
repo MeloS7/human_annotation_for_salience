@@ -58,7 +58,9 @@ try {
   await db.query('insert into auth.users(id) values($1),($2)', [firstUID,recoveredUID]);
   const session = await api(firstUID, 'enroll', null, {display_name:'OFFLINE_QA',recovery_code:firstCode});
   assert.equal(session.progress.study_total,126);
-  assert.equal(session.progress.practice_total,8);
+  assert.equal(session.progress.practice_total,2);
+  assert.equal(session.progress.practice_requirement,2);
+  assert.equal(session.tasks.length,128);
   const practiceID = session.tasks.find(task => task.kind === 'practice' && task.position === 1).id;
   const studyID = session.tasks.find(task => task.kind === 'study' && task.position === 1).id;
   await assert.rejects(api(firstUID,'task',practiceID), {code:'PT403'});

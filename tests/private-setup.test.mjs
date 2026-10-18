@@ -257,8 +257,12 @@ test('split private initializer is bounded, atomic, ordered, rerunnable, and fai
           decode(repeat('a', 64), 'hex'), 1);
         insert into annotation_private.assignments
           (task_id, participant_id, template_id, kind, position, revision, stage1_answers)
-        values ('task-existing', 'participant-existing', 'scheme-1-practice-1', 'practice', 1, 7,
-          '{"readability":"B"}'::jsonb);
+        select
+          case when template_id='scheme-1-practice-1' then 'task-existing' else 'existing-' || template_id end,
+          'participant-existing', template_id, kind, position,
+          case when template_id='scheme-1-practice-1' then 7 else 0 end,
+          case when template_id='scheme-1-practice-1' then '{"readability":"B"}'::jsonb else '{}'::jsonb end
+        from annotation_private.templates where scheme=1;
       `);
 
       for (const file of files) await db.exec(file.contents);

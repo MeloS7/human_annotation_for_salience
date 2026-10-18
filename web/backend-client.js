@@ -342,7 +342,7 @@ export function createAnnotationBackend(config, {
         return {
           authenticated: false, enrolled: false, needs_enrollment: true, mode: "study", participant_id: null,
           display_name: null, accepted_instructions: false, tasks: [],
-          progress: { study_total: 126, study_completed: 0, practice_total: 8, practice_completed: 0, paused: 0 },
+          progress: { study_total: 126, study_completed: 0, practice_total: 2, practice_completed: 0, practice_requirement: 2, paused: 0 },
           rubric: { criteria: [], choices: [], shared_instructions: [] }, guide_md: "",
         };
       }

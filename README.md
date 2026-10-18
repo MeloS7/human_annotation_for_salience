@@ -6,7 +6,7 @@ A browser-based, two-stage human preference annotation interface. The frontend i
 
 1. Enter a nickname. No email address or password is required. Nicknames are display labels, not account credentials; two people may use the same nickname without sharing data.
 2. Save the private recovery code shown to you. It acts as an access key, so do not share it or include it in screenshots. Keep using the same browser to resume automatically.
-3. Read the instructions and complete the practice comparisons, then the study comparisons. You may save, pause and return; there is no need to finish in one session.
+3. Read the instructions and complete two practice comparisons, then the study comparisons. You may save, pause and return; there is no need to finish in one session.
 4. Choose A, B or Tie for source coverage, readability, faithfulness and content focus. Review and lock these four preferences before the reference is shown. Then judge reference coverage. Locked preferences cannot be edited.
 5. On another device, use **Recover progress** and your recovery code. Successful recovery issues a new code and invalidates the old one. The previous device loses access, but your answers, task order and lock states remain unchanged. Save the new code.
 
@@ -42,7 +42,11 @@ The generator validates the frozen materials and assignment plans and refuses to
 
 An optional `--expected-output /path/to/private/expected-private.json` writes a private verification fixture. Check a complete import offline with `node scripts/verify-private-import.mjs /path/to/private/sql-editor-import /path/to/private/expected-private.json`. This verifies exact material hashes, repeat-import persistence and recovery against a disposable database, not the production project.
 
-Each volunteer receives the complete frozen study plus separate practice tasks. Three prevalidated, balanced presentation schemes are rotated across enrollments; each volunteer's task order is independently shuffled and stored. Recovery retains the same scheme/order. The online installation does not import earlier local preview answers.
+Each volunteer receives the complete frozen study plus two active practice tasks. Three prevalidated, balanced presentation schemes are rotated across enrollments; each volunteer's task order is independently shuffled and stored. Recovery retains the same scheme/order. The private template pool retains eight practice examples per scheme; only two are shown and required. Extra historical practice records remain in storage and exports, rather than being deleted. The online installation does not import earlier local preview answers.
+
+### Upgrading an existing eight-practice installation
+
+Apply `supabase/migrations/20261018010000_two_practice_tasks.sql` in a transaction before deploying the matching frontend. Do not reimport the study materials. The migration selects two persistent practice IDs per participant, prioritizing completed work and then unpaused work already started. Someone who has completed at least two practice comparisons can proceed directly to the study. It does not change existing task IDs, ordering, answers, revisions, lock/exposure timestamps or recovery credentials. Historical extra practice records remain in exports, identified by `practice_required: false`. Rerunning the migration does not reselect the two tasks. The frontend checks the server's two-practice protocol marker and fails closed if the database upgrade is missing.
 
 ### Access control and collection
 

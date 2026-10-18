@@ -1,7 +1,7 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const { STAGE_ONE_IDS, allStageChoicesPresent, criteriaForStage, mayRequestReference, stageOf } = window.HumanPreferenceStageState;
+const { STAGE_ONE_IDS, allStageChoicesPresent, criteriaForStage, displayAssignmentNumber, mayRequestReference, practiceProtocolReady, stageOf, studyGateOpen } = window.HumanPreferenceStageState;
 let session = null;
 let current = null;
 let pendingRecoveryCode = null;
@@ -48,9 +48,23 @@ async function busy(callback) {
 function readOnly(ctx = current) { return !ctx || ctx.task.status === "complete" || ctx.task.status === "paused"; }
 function taskPath(id, suffix = "") { return `/api/task/${encodeURIComponent(id)}${suffix}`; }
 function preferencesFor(stage) { return criteriaForStage(session?.rubric?.criteria, stage); }
-function studyReady() { return session.progress.practice_completed >= session.progress.practice_total; }
+function studyReady() { return studyGateOpen(session); }
 function showView(id) {
-  for (const view of ["login-view", "recovery-view", "recovery-pending-view", "intro-view", "workspace"]) $(view).hidden = view !== id;
+  for (const view of ["login-view", "recovery-view", "recovery-pending-view", "maintenance-view", "intro-view", "workspace"]) $(view).hidden = view !== id;
+}
+
+function showProtocolUpdateRequired() {
+  current = null;
+  clearComparison();
+  $("task-list").replaceChildren();
+  $("maintenance-message").textContent = "The server has not confirmed the two-practice setup required for this version. Your saved progress is preserved, but annotation is paused until the coordinator updates the study setup.";
+  showView("maintenance-view");
+}
+
+function taskDisplayLabel(task) {
+  const number = displayAssignmentNumber(task, session?.tasks);
+  if (task.kind === "practice") return number === null ? "Practice" : `Practice ${number}`;
+  return number === null ? "Comparison" : `Comparison ${String(number).padStart(3, "0")}`;
 }
 
 function appendInline(parent, text) {
@@ -163,6 +177,10 @@ async function refreshSession() {
     showRecoveryConfirmation(uid, pending.code);
     return;
   }
+  if (!practiceProtocolReady(session)) {
+    showProtocolUpdateRequired();
+    return;
+  }
   renderGuide($("intro-guide"), session.guide_md || "");
   renderGuide($("dialog-guide"), session.guide_md || "");
   if (!session.accepted_instructions) { showView("intro-view"); return; }
@@ -172,7 +190,7 @@ async function refreshSession() {
 
 function queueTasks() { return session.tasks.filter((task) => task.kind === activeKind).sort((a, b) => a.position - b.position); }
 function renderQueue() {
-  if (!session || !session.authenticated || !session.accepted_instructions) return;
+  if (!session || !session.authenticated || !session.accepted_instructions || !practiceProtocolReady(session)) return;
   $("study-tab").classList.toggle("active", activeKind === "study");
   $("practice-tab").classList.toggle("active", activeKind === "practice");
   $("study-tab").setAttribute("aria-pressed", String(activeKind === "study"));
@@ -187,17 +205,18 @@ function renderQueue() {
   $("progress-bar").value = complete;
   $("queue-note").textContent = activeKind === "practice"
     ? "Practice answers are not included in the study results."
-    : studyReady() ? "Your answers and progress are private to this workspace." : "Complete the practice comparisons before starting the study.";
+    : studyReady() ? "Your answers and progress are private to this workspace." : "Complete both practice comparisons before starting the study.";
   $("task-list").replaceChildren();
   for (const task of tasks) {
     if ($("unfinished-only").checked && task.status === "complete" && (!current || current.task.id !== task.id)) continue;
     const button = document.createElement("button");
     button.type = "button";
     button.className = `task-button${current && current.task.id === task.id ? " active" : ""}`;
-    button.disabled = busyDepth > 0;
+    button.disabled = busyDepth > 0 || (activeKind === "study" && !studyReady());
+    button.dataset.kind = activeKind;
     if (current && current.task.id === task.id) button.setAttribute("aria-current", "true");
     const dot = document.createElement("span"); dot.className = `task-dot ${task.status}`; dot.setAttribute("aria-hidden", "true");
-    const label = document.createElement("span"); label.textContent = `${activeKind === "practice" ? "Practice" : "Comparison"} ${String(task.position).padStart(3, "0")}`;
+    const label = document.createElement("span"); label.textContent = taskDisplayLabel(task);
     const status = document.createElement("span"); status.className = "task-small-status";
     status.textContent = task.status === "complete" ? "Done" : task.status === "paused" ? "Paused" : Number(task.stage) === 2 || task.status === "locked" ? "Stage 2" : "";
     button.append(dot, label, status);
@@ -234,9 +253,10 @@ async function selectKind(kind) {
 
 async function resumeNext({ skipSave = false, afterCurrent = false } = {}) {
   if (!skipSave) await flushSave();
+  if (!practiceProtocolReady(session)) { showProtocolUpdateRequired(); return; }
   if (activeKind === "study" && !studyReady()) {
     current = null;
-    emptyState("Start with practice", "Complete the practice comparisons to become familiar with the two-stage workflow. Practice does not contribute to the study results.", "Go to practice", () => selectKind("practice"));
+    emptyState("Start with practice", "Complete both practice comparisons to become familiar with the two-stage workflow. Practice does not contribute to the study results.", "Go to practice", () => selectKind("practice"));
     return;
   }
   const tasks = queueTasks();
@@ -256,6 +276,12 @@ async function resumeNext({ skipSave = false, afterCurrent = false } = {}) {
 
 async function loadTask(id, { skipSave = false } = {}) {
   if (current && current.task.id === id && !skipSave) return;
+  const requestedTask = session?.tasks?.find((task) => task.id === id);
+  if (!practiceProtocolReady(session)) { showProtocolUpdateRequired(); return; }
+  if (requestedTask?.kind === "study" && !studyReady()) {
+    emptyState("Start with practice", "Complete both practice comparisons before starting the study.", "Go to practice", () => selectKind("practice"));
+    return;
+  }
   await busy(async () => {
     if (!skipSave) await flushSave();
     const authUid = await window.HumanAnnotationBackend.identityUid();
@@ -298,7 +324,7 @@ function renderTask() {
   $("empty-state").hidden = true;
   $("comparison-view").hidden = false;
   $("task-kind").textContent = task.kind === "practice" ? "Practice · not part of study results" : "Your independent assessment";
-  $("task-title").textContent = `${task.kind === "practice" ? "Practice" : "Comparison"} ${String(task.position).padStart(3, "0")}`;
+  $("task-title").textContent = taskDisplayLabel(task);
   $("task-state").textContent = task.status === "complete" ? "Completed · read only" : task.status === "paused" ? "Paused for review" : stage === 2 ? "First four answers locked" : "Reference not shown";
   $("task-state").className = `badge ${task.status === "complete" ? "complete" : task.status === "paused" ? "paused" : stage === 2 ? "locked" : ""}`;
   $("stage-one-step").classList.toggle("active", stage === 1);
@@ -426,7 +452,9 @@ function updateControls() {
   $("continue-after-recovery").disabled = disabled || !$("recovery-saved-check").checked;
   $("switch-confirm").disabled = disabled || !$("switch-recovery-check").checked;
   $("begin-button").disabled = disabled || !$("guide-ack").checked;
-  for (const button of $("task-list").querySelectorAll("button")) button.disabled = disabled;
+  for (const button of $("task-list").querySelectorAll("button")) {
+    button.disabled = disabled || (button.dataset.kind === "study" && !studyReady());
+  }
   if (identityFrozen) {
     for (const control of document.querySelectorAll("button, input, select, textarea")) {
       if (control.id !== "identity-reload") control.disabled = true;

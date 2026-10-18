@@ -33,8 +33,12 @@ function makeServer() {
       participant_id: participant.id,
       display_name: participant.name,
       accepted_instructions: false,
-      tasks: [],
-      progress: { study_total: 126, study_completed: 0, practice_total: 8, practice_completed: 0, paused: 0 },
+      tasks: [
+        { id: "practice-old-3", kind: "practice", position: 3, status: "draft", stage: 1 },
+        { id: "practice-old-7", kind: "practice", position: 7, status: "draft", stage: 1 },
+        ...Array.from({ length: 126 }, (_, index) => ({ id: `study-${index + 1}`, kind: "study", position: index + 1, status: "draft", stage: 1 })),
+      ],
+      progress: { study_total: 126, study_completed: 0, practice_total: 2, practice_completed: 0, practice_requirement: 2, paused: 0 },
       rubric: { criteria: [], choices: [], shared_instructions: [] },
       guide_md: "Synthetic instructions.",
     };
@@ -44,7 +48,7 @@ function makeServer() {
     const participant = participantsByUid.get(uid);
     return participant
       ? sessionPayload(participant)
-      : { authenticated: true, enrolled: false, needs_enrollment: true, mode: "study", accepted_instructions: false, tasks: [], progress: { study_total: 126, study_completed: 0, practice_total: 8, practice_completed: 0, paused: 0 }, rubric: { criteria: [], choices: [], shared_instructions: [] }, guide_md: "" };
+      : { authenticated: true, enrolled: false, needs_enrollment: true, mode: "study", accepted_instructions: false, tasks: [], progress: { study_total: 126, study_completed: 0, practice_total: 2, practice_completed: 0, practice_requirement: 2, paused: 0 }, rubric: { criteria: [], choices: [], shared_instructions: [] }, guide_md: "" };
   }
 
   function handle({ action, taskId, payload, uid }) {
@@ -285,6 +289,8 @@ test("no authenticated session never reaches RPC and a null server response is n
   const state = await backend.request("session");
   assert.equal(state.authenticated, false);
   assert.equal(state.enrolled, false);
+  assert.equal(state.progress.practice_total, 2);
+  assert.equal(state.progress.practice_requirement, 2);
   await assert.rejects(backend.request("save", "task-1", { stage: 1, revision: 0, answers: { readability: "A" } }), (error) => error.status === 401);
   assert.equal(mock.stats.calls.length, 0);
   const uid = await backend.ensureAnonymousIdentity({ purpose: "enroll" });

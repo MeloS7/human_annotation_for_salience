@@ -8,6 +8,8 @@ import { PGlite } from '@electric-sql/pglite';
 
 const MIGRATION_PATH = new URL('../supabase/migrations/20261018000000_annotation_api.sql', import.meta.url);
 const MIGRATION = await readFile(MIGRATION_PATH, 'utf8');
+const PRACTICE_MIGRATION_PATH = new URL('../supabase/migrations/20261018010000_two_practice_tasks.sql', import.meta.url);
+const PRACTICE_MIGRATION = await readFile(PRACTICE_MIGRATION_PATH, 'utf8');
 const RUBRIC_VERSION = 'v2-two-stage-selection-only-v1';
 const STAGE1 = {
   source_coverage: 'A',
@@ -141,11 +143,19 @@ async function seedStudy(db, { enrollmentOpen = true, includeTemplates = true } 
   }
 }
 
+async function applyPracticeMigration(db) {
+  // Supabase applies each migration transactionally; keep that property in
+  // PGlite too, because the migration's table lock must cover its DDL/backfill.
+  await db.exec(`begin;\n${PRACTICE_MIGRATION}\ncommit;`);
+}
+
 async function openDatabase(dataDir = undefined, options = {}) {
+  const { applyTwoPracticeMigration = true, ...studyOptions } = options;
   const db = new PGlite(dataDir);
   await createAuthBase(db);
   await db.exec(MIGRATION);
-  await seedStudy(db, options);
+  if (applyTwoPracticeMigration) await applyPracticeMigration(db);
+  await seedStudy(db, studyOptions);
   return db;
 }
 
@@ -224,9 +234,10 @@ test('open enrollment assigns balanced schemes, independent names, and opaque st
     assert.deepEqual(sessions.map((session) => session.enrolled), [true, true, true, true]);
     assert.deepEqual(sessions.map((session) => session.display_name), ['Same nickname', 'Same nickname', 'Same nickname', 'Same nickname']);
     assert.equal(new Set(sessions.map((session) => session.participant_id)).size, 4);
-    assert.deepEqual(sessions.map((session) => session.tasks.length), [134, 134, 134, 134]);
+    assert.deepEqual(sessions.map((session) => session.tasks.length), [128, 128, 128, 128]);
     assert.deepEqual(sessions.map((session) => session.progress), userIds.map(() => ({
-      study_total: 126, study_completed: 0, practice_total: 8, practice_completed: 0, paused: 0,
+      study_total: 126, study_completed: 0, practice_total: 2, practice_completed: 0,
+      practice_requirement: 2, paused: 0,
     })));
     for (const userId of userIds) {
       await api(db, userId, 'acknowledge', null, { accepted: true });
@@ -264,13 +275,13 @@ test('open enrollment assigns balanced schemes, independent names, and opaque st
     assert.equal(Number(afterRetry.rows[0].n), 4);
 
     for (const session of sessions) {
-      for (const [kind, count] of [['practice', 8], ['study', 126]]) {
+      for (const [kind, count] of [['practice', 2], ['study', 126]]) {
         assert.deepEqual(
           session.tasks.filter((task) => task.kind === kind).map((task) => task.position),
           [...Array(count)].map((_, index) => index + 1),
         );
       }
-      assert.equal(new Set(session.tasks.map((task) => task.id)).size, 134);
+      assert.equal(new Set(session.tasks.map((task) => task.id)).size, 128);
       assert.equal(session.tasks.some((task) => task.id.includes('scheme-')), false);
       assert.equal(JSON.stringify(session).includes('PRIVATE_PAIR_'), false);
       assert.equal(JSON.stringify(session).includes('PRIVATE_OURS_METHOD'), false);
@@ -342,6 +353,7 @@ test('anonymous identities are isolated and the two-stage lifecycle, gates, expo
       'select * from annotation_private.events',
       "select annotation_private._normalize_recovery_code('null'::jsonb)",
       "select annotation_private._normalize_display_name('null'::jsonb)",
+      "select annotation_private._ensure_practice_subset('participant_none')",
       "select annotation_private._session_payload('participant_none')",
       'select annotation_private.export_all()',
       "select annotation_private.resolve_problem('participant_none', 'task_none')",
@@ -388,7 +400,7 @@ test('anonymous identities are isolated and the two-stage lifecycle, gates, expo
       'id', 'kind', 'position', 'total', 'stage', 'status', 'revision', 'request', 'source', 'source_sha256',
       'summary_a', 'summary_b', 'answers', 'locked_at', 'completed_at', 'reference_released_at',
     ].sort());
-    assert.equal(draft.total, 8);
+    assert.equal(draft.total, 2);
     assert.equal(Object.hasOwn(draft, 'reference'), false);
     assert.deepEqual(draft.answers, {});
     assert.equal(draft.source, taskMaterial.rows[0].payload.source);
@@ -462,6 +474,7 @@ test('anonymous identities are isolated and the two-stage lifecycle, gates, expo
     ].sort());
     assert.equal(exportBeforePractice.study_assignments.length, 126);
     assert.equal(exportBeforePractice.practice_assignments.length, 8);
+    assert.equal(exportBeforePractice.practice_assignments.filter((task) => task.practice_required).length, 2);
     assert.equal(exportBeforePractice.participant_id, oneSession.participant_id);
     assert.equal(exportBeforePractice.display_name, 'Volunteer One');
     const exportText = JSON.stringify(exportBeforePractice);
@@ -714,7 +727,7 @@ test('enrollment fails closed for malformed names/codes, closed signup, and inco
     const unicodeName = '😀'.repeat(40);
     const validSession = await api(db, first, 'enroll', null, { display_name: ` ${unicodeName} `, recovery_code: `\t${recoveryCode(30).toLowerCase()}\n` });
     assert.equal(validSession.display_name, unicodeName);
-    assert.equal(validSession.tasks.length, 134);
+    assert.equal(validSession.tasks.length, 128);
     await insertAuthUser(db, uid(31));
     const duplicateCodeError = await api(db, uid(31), 'enroll', null, {
       display_name: 'Another volunteer', recovery_code: recoveryCode(30),
@@ -772,12 +785,24 @@ test('migration is additive and idempotent; enrollment, responses, and recovery 
     const next = recoveryCode(41);
     const session = await enroll(db, user, 'Persistent volunteer', code);
     await api(db, user, 'acknowledge', null, { accepted: true });
+    assert.equal(session.tasks.filter((task) => task.kind === 'practice').length, 2);
+    const requiredBefore = await db.query(
+      `select array_agg(position order by position) as positions
+       from annotation_private.assignments where participant_id=$1 and kind='practice' and practice_required`,
+      [session.participant_id],
+    );
     const taskId = assignedTask(session, 'practice').id;
     const draft = await api(db, user, 'task', taskId);
     const saved = await api(db, user, 'save', taskId, {
       stage: 1, revision: draft.revision, answers: { readability: 'B' },
     });
-    await db.exec(MIGRATION);
+    await applyPracticeMigration(db);
+    const requiredAfter = await db.query(
+      `select array_agg(position order by position) as positions
+       from annotation_private.assignments where participant_id=$1 and kind='practice' and practice_required`,
+      [session.participant_id],
+    );
+    assert.deepEqual(requiredAfter.rows[0].positions, requiredBefore.rows[0].positions);
     const countsBeforeClose = await db.query(`
       select (select count(*) from annotation_private.participants) as participants,
              (select count(*) from annotation_private.assignments) as assignments,
@@ -801,6 +826,263 @@ test('migration is additive and idempotent; enrollment, responses, and recovery 
   } finally {
     if (db) await db.close();
     await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('two-practice migration preserves old state and persistently selects the most useful two records', async () => {
+  assert.ok(
+    PRACTICE_MIGRATION.indexOf('lock table annotation_private.participants')
+      < PRACTICE_MIGRATION.indexOf('alter table annotation_private.assignments'),
+    'the participant table must be locked before assignment DDL',
+  );
+  assert.doesNotMatch(PRACTICE_MIGRATION, /^\s*begin\s*;/i);
+  assert.doesNotMatch(PRACTICE_MIGRATION, /\bcommit\s*;\s*$/i);
+  const db = await openDatabase(undefined, { applyTwoPracticeMigration: false });
+  try {
+    const userIds = [51, 52, 53, 54].map(uid);
+    const sessions = [];
+    for (let index = 0; index < userIds.length; index += 1) {
+      sessions.push(await enroll(db, userIds[index], `Legacy ${index + 1}`, recoveryCode(51 + index)));
+      await api(db, userIds[index], 'acknowledge', null, { accepted: true });
+    }
+
+    const setCompleted = async (participantId, positions) => {
+      for (const position of positions) {
+        await db.query(
+          `update annotation_private.assignments
+             set stage=2, status='complete', revision=4,
+                 stage1_answers=$3::jsonb, stage2_answers='{"reference_coverage":"A"}'::jsonb,
+                 locked_at='2026-10-01T00:00:00Z', reference_released_at='2026-10-01T00:01:00Z',
+                 completed_at='2026-10-01T00:02:00Z', updated_at='2026-10-01T00:02:00Z'
+           where participant_id=$1 and kind='practice' and position=$2`,
+          [participantId, position, JSON.stringify(STAGE1)],
+        );
+      }
+    };
+    const setStarted = async (participantId, position) => db.query(
+      `update annotation_private.assignments
+          set revision=1, stage1_answers='{"source_coverage":"A"}'::jsonb,
+              updated_at='2026-10-02T00:00:00Z'
+        where participant_id=$1 and kind='practice' and position=$2`,
+      [participantId, position],
+    );
+    const setLocked = async (participantId, position) => db.query(
+      `update annotation_private.assignments
+          set stage=2, status='locked', revision=3, stage1_answers=$3::jsonb,
+              locked_at='2026-10-02T00:00:00Z', updated_at='2026-10-02T00:00:00Z'
+        where participant_id=$1 and kind='practice' and position=$2`,
+      [participantId, position, JSON.stringify(STAGE1)],
+    );
+    const setPaused = async (participantId, position) => db.query(
+      `update annotation_private.assignments
+          set status='paused', paused_from_status='draft', revision=1,
+              updated_at='2026-10-03T00:00:00Z'
+        where participant_id=$1 and kind='practice' and position=$2`,
+      [participantId, position],
+    );
+
+    // Legacy cohorts: 0 completed plus a started and paused record; 1
+    // completed plus a locked record; 2 completed; and all 8 completed.
+    await setPaused(sessions[0].participant_id, 1);
+    await setStarted(sessions[0].participant_id, 7);
+    await setCompleted(sessions[1].participant_id, [5]);
+    await setLocked(sessions[1].participant_id, 3);
+    await setCompleted(sessions[2].participant_id, [4, 8]);
+    await setCompleted(sessions[3].participant_id, [1, 2, 3, 4, 5, 6, 7, 8]);
+    const formalDraftId = assignedTask(sessions[3], 'study', 1).id;
+    const formalLockedId = assignedTask(sessions[3], 'study', 2).id;
+    const legacyStudyOrder = sessions[3].tasks
+      .filter((task) => task.kind === 'study')
+      .map(({ id, position }) => ({ id, position }));
+    await db.query(
+      `update annotation_private.assignments
+          set revision=2, stage1_answers='{"source_coverage":"B","readability":"Tie"}'::jsonb,
+              updated_at='2026-10-04T00:00:00Z'
+        where task_id=$1 and participant_id=$2`,
+      [formalDraftId, sessions[3].participant_id],
+    );
+    await db.query(
+      `update annotation_private.assignments
+          set stage=2, status='locked', revision=4, stage1_answers=$3::jsonb,
+              stage2_answers='{"reference_coverage":"Tie"}'::jsonb,
+              locked_at='2026-10-05T00:00:00Z', reference_released_at='2026-10-05T00:01:00Z',
+              updated_at='2026-10-05T00:01:00Z'
+        where task_id=$1 and participant_id=$2`,
+      [formalLockedId, sessions[3].participant_id, JSON.stringify(STAGE1)],
+    );
+    await db.query(
+      `insert into annotation_private.events(participant_id, task_id, event_type, revision, payload)
+       select $1, task_id, 'test_preservation_marker', 1, '{"kept":true}'::jsonb
+       from annotation_private.assignments where participant_id=$1 and kind='practice' and position=7`,
+      [sessions[0].participant_id],
+    );
+
+    const assignmentSnapshot = await db.query(
+      `select coalesce(jsonb_agg(to_jsonb(a) - 'practice_required' order by task_id), '[]'::jsonb) as rows
+       from annotation_private.assignments a`,
+    );
+    const eventSnapshot = await db.query(
+      `select coalesce(jsonb_agg(to_jsonb(e) order by event_id), '[]'::jsonb) as rows
+       from annotation_private.events e`,
+    );
+    const participantSnapshot = await db.query(
+      `select coalesce(jsonb_agg(to_jsonb(p) order by participant_id), '[]'::jsonb) as rows
+       from annotation_private.participants p`,
+    );
+
+    await applyPracticeMigration(db);
+    const expectedPositions = [[2, 7], [3, 5], [4, 8], [1, 2]];
+    const expectedCompleted = [0, 1, 2, 2];
+    for (let index = 0; index < sessions.length; index += 1) {
+      const selected = await db.query(
+        `select array_agg(position order by position) as positions,
+                count(*) filter (where status='complete') as complete
+         from annotation_private.assignments
+         where participant_id=$1 and kind='practice' and practice_required`,
+        [sessions[index].participant_id],
+      );
+      assert.deepEqual(selected.rows[0].positions, expectedPositions[index]);
+      const visible = await api(db, userIds[index], 'session');
+      assert.equal(visible.tasks.length, 128);
+      assert.equal(visible.tasks.filter((task) => task.kind === 'practice').length, 2);
+      assert.deepEqual(
+        visible.tasks.filter((task) => task.kind === 'practice').map((task) => task.position),
+        expectedPositions[index],
+      );
+      assert.equal(visible.progress.practice_total, 2);
+      assert.equal(visible.progress.practice_requirement, 2);
+      assert.equal(visible.progress.practice_completed, expectedCompleted[index]);
+      if (index === 3) {
+        assert.equal(visible.progress.study_completed, 0);
+        assert.deepEqual(
+          visible.tasks.filter((task) => task.kind === 'study').map(({ id, position }) => ({ id, position })),
+          legacyStudyOrder,
+        );
+        const keptDraft = await api(db, userIds[index], 'task', formalDraftId);
+        assert.equal(keptDraft.revision, 2);
+        assert.deepEqual(keptDraft.answers, { source_coverage: 'B', readability: 'Tie' });
+        const keptLocked = await api(db, userIds[index], 'task', formalLockedId);
+        assert.equal(keptLocked.status, 'locked');
+        assert.equal(keptLocked.revision, 4);
+        assert.equal(Date.parse(keptLocked.locked_at), Date.parse('2026-10-05T00:00:00Z'));
+        assert.equal(Date.parse(keptLocked.reference_released_at), Date.parse('2026-10-05T00:01:00Z'));
+        assert.deepEqual(keptLocked.answers, { reference_coverage: 'Tie' });
+      }
+    }
+
+    const assignmentSnapshotAfter = await db.query(
+      `select coalesce(jsonb_agg(to_jsonb(a) - 'practice_required' order by task_id), '[]'::jsonb) as rows
+       from annotation_private.assignments a`,
+    );
+    const eventSnapshotAfter = await db.query(
+      `select coalesce(jsonb_agg(to_jsonb(e) order by event_id), '[]'::jsonb) as rows
+       from annotation_private.events e`,
+    );
+    const participantSnapshotAfter = await db.query(
+      `select coalesce(jsonb_agg(to_jsonb(p) order by participant_id), '[]'::jsonb) as rows
+       from annotation_private.participants p`,
+    );
+    assert.deepEqual(assignmentSnapshotAfter.rows[0].rows, assignmentSnapshot.rows[0].rows);
+    assert.deepEqual(eventSnapshotAfter.rows[0].rows, eventSnapshot.rows[0].rows);
+    assert.deepEqual(participantSnapshotAfter.rows[0].rows, participantSnapshot.rows[0].rows);
+
+    // A sixth archived practice record remains directly addressable to an
+    // old client, but it cannot replace either selected record after a write.
+    const archivedId = assignedTask(sessions[0], 'practice', 8).id;
+    const archived = await api(db, userIds[0], 'task', archivedId);
+    assert.equal(archived.position, 8);
+    assert.equal(archived.total, 2);
+    await completePractice(db, userIds[0], archivedId);
+    const selectedAfterArchivedWrite = await db.query(
+      `select array_agg(position order by position) as positions
+       from annotation_private.assignments where participant_id=$1 and kind='practice' and practice_required`,
+      [sessions[0].participant_id],
+    );
+    assert.deepEqual(selectedAfterArchivedWrite.rows[0].positions, [2, 7]);
+
+    // The study gate is based only on the selected pair; other completed
+    // records neither satisfy nor interfere with that requirement.
+    await assertPgCode(api(db, userIds[0], 'task', assignedTask(sessions[0], 'study').id), 'PT403');
+    for (const position of expectedPositions[0]) {
+      const selectedTask = assignedTask(sessions[0], 'practice', position);
+      await completePractice(db, userIds[0], selectedTask.id);
+    }
+    assert.equal((await api(db, userIds[0], 'task', assignedTask(sessions[0], 'study').id)).kind, 'study');
+    // One completed selection plus one unfinished selection is still gated.
+    await assertPgCode(api(db, userIds[1], 'task', assignedTask(sessions[1], 'study').id), 'PT403');
+    await completePractice(db, userIds[1], assignedTask(sessions[1], 'practice', 3).id);
+    assert.equal((await api(db, userIds[1], 'task', assignedTask(sessions[1], 'study').id)).kind, 'study');
+    // Existing users whose selected pair was already complete can continue.
+    assert.equal((await api(db, userIds[2], 'task', assignedTask(sessions[2], 'study').id)).kind, 'study');
+    assert.equal((await api(db, userIds[3], 'task', assignedTask(sessions[3], 'study').id)).kind, 'study');
+
+    const volunteerExport = await api(db, userIds[0], 'export');
+    assert.equal(volunteerExport.practice_assignments.length, 8);
+    assert.deepEqual(
+      volunteerExport.practice_assignments.filter((task) => task.practice_required).map((task) => task.position),
+      expectedPositions[0],
+    );
+
+    // The selected IDs remain fixed across repeat migration/backfill.
+    await applyPracticeMigration(db);
+    const afterRepeat = await db.query(
+      `select array_agg(position order by position) as positions
+       from annotation_private.assignments where participant_id=$1 and kind='practice' and practice_required`,
+      [sessions[0].participant_id],
+    );
+    assert.deepEqual(afterRepeat.rows[0].positions, [2, 7]);
+
+    await insertAuthUser(db, uid(151));
+    const recovered = await api(db, uid(151), 'recover', null, {
+      recovery_code: recoveryCode(51), new_recovery_code: recoveryCode(151),
+    });
+    assert.equal(recovered.participant_id, sessions[0].participant_id);
+    assert.deepEqual(
+      recovered.tasks.filter((task) => task.kind === 'practice').map((task) => task.position),
+      [2, 7],
+    );
+
+    await db.query(
+      `update annotation_private.assignments set practice_required=false
+       where participant_id=$1 and kind='practice'`,
+      [sessions[0].participant_id],
+    );
+    await db.query(
+      `update annotation_private.assignments set practice_required=true
+       where participant_id=$1 and kind='practice' and position=2`,
+      [sessions[0].participant_id],
+    );
+    await assertPgCode(
+      db.query('select annotation_private._ensure_practice_subset($1)', [sessions[0].participant_id]),
+      'PT503',
+    );
+    await db.query(
+      `update annotation_private.assignments set practice_required=true
+       where participant_id=$1 and kind='practice' and position=7`,
+      [sessions[0].participant_id],
+    );
+    await db.query(
+      `update annotation_private.assignments set practice_required=true
+       where participant_id=$1 and kind='practice' and position=3`,
+      [sessions[0].participant_id],
+    );
+    await assertPgCode(
+      db.query('select annotation_private._ensure_practice_subset($1)', [sessions[0].participant_id]),
+      'PT503',
+    );
+
+    const missingPoolTask = await db.query(
+      `select task_id from annotation_private.assignments
+       where participant_id=$1 and kind='practice' and position=8`,
+      [sessions[3].participant_id],
+    );
+    await db.query('delete from annotation_private.assignments where task_id=$1', [missingPoolTask.rows[0].task_id]);
+    await assertPgCode(
+      db.query('select annotation_private._ensure_practice_subset($1)', [sessions[3].participant_id]),
+      'PT503',
+    );
+  } finally {
+    await db.close();
   }
 });
 
