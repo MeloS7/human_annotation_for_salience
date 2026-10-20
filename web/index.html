@@ -89,6 +89,7 @@
         <h1>Annotation instructions</h1>
         <p class="muted">The first four preferences are submitted before the reference is shown. Please read the instructions before continuing.</p>
         <div id="intro-guide" class="guide-copy"></div>
+        <p id="qualification-intro-note" class="pilot-note" hidden></p>
         <div class="acknowledgement">
           <label><input id="guide-ack" type="checkbox" /> I have read the annotation instructions.</label>
           <button id="begin-button" class="button primary" type="button" disabled>Continue to workspace <span aria-hidden="true">&rarr;</span></button>
@@ -99,8 +100,15 @@
     <main id="workspace" class="workspace" hidden>
       <aside class="sidebar" aria-label="Your assignments">
         <div class="sidebar-heading"><p class="eyebrow">Your workspace</p><h2>Comparisons</h2></div>
+        <section id="qualification-offer" class="qualification-offer" hidden>
+          <p class="eyebrow">Optional pilot</p>
+          <p>Try the 10-comparison qualification pilot. It is a one-time attempt; study comparisons stay locked until you meet the pilot threshold. Your saved answers are kept.</p>
+          <button id="qualification-opt-in" class="button secondary full-width" type="button">Try qualification pilot</button>
+        </section>
+        <p id="qualification-workspace-note" class="qualification-workspace-note" hidden></p>
         <div class="queue-tabs" role="group" aria-label="Assignment group">
           <button id="study-tab" class="queue-tab" type="button">Study <span id="study-total">126</span></button>
+          <button id="qualification-tab" class="queue-tab" type="button" hidden>Qualification <span id="qualification-total">10</span></button>
           <button id="practice-tab" class="queue-tab" type="button">Practice <span id="practice-total">2</span></button>
         </div>
         <div class="progress-block">
@@ -109,6 +117,7 @@
         </div>
         <p id="queue-note" class="queue-note"></p>
         <button id="resume-button" class="button secondary full-width" type="button">Resume next comparison</button>
+        <button id="qualification-results-button" class="button quiet full-width" type="button" hidden>Review qualification results</button>
         <label class="filter-toggle"><input id="unfinished-only" type="checkbox" checked /> Show unfinished only</label>
         <div id="task-list" class="task-list" role="list" aria-label="Comparison list"></div>
         <p class="sidebar-footnote">A saved draft can be resumed later. Locked answers cannot be changed.</p>
@@ -121,6 +130,25 @@
           <p id="empty-description"></p>
           <button id="empty-action" class="button primary" type="button" hidden>Continue</button>
         </div>
+
+        <section id="qualification-results-panel" class="qualification-results" hidden aria-labelledby="qualification-results-heading">
+          <p class="eyebrow">Qualification pilot</p>
+          <h1 id="qualification-results-heading">Your result</h1>
+          <p id="qualification-results-summary" class="qualification-results-summary" role="status" aria-live="polite"></p>
+          <p class="muted">The counted judgments use a provisional AI-suggested key that has not yet been validated. The other dimension judgments are shown for discussion only and do not affect pass/fail.</p>
+          <div class="qualification-results-table-wrap">
+            <table class="qualification-results-table"><tbody id="qualification-results-table"></tbody></table>
+          </div>
+          <details class="qualification-items-details">
+            <summary>Review item-by-item comparisons</summary>
+            <div id="qualification-items" class="qualification-items"></div>
+          </details>
+          <div class="qualification-result-actions">
+            <button id="qualification-results-retry" class="button secondary" type="button" hidden>Retry loading results</button>
+            <button id="qualification-results-download" class="button secondary" type="button" hidden>Download result JSON</button>
+            <button id="qualification-continue-study-panel" class="button primary" type="button" hidden>Continue to study</button>
+          </div>
+        </section>
 
         <div id="comparison-view" hidden>
           <div class="comparison-heading">
@@ -186,6 +214,21 @@
     <dialog id="guide-dialog" class="guide-dialog"><div class="dialog-heading"><h2>Annotation instructions</h2><button id="close-guide" class="button quiet" type="button">Close</button></div><div id="dialog-guide" class="guide-copy"></div></dialog>
 
     <dialog id="review-dialog"><p class="eyebrow">Review before continuing</p><h2>Lock your first four answers?</h2><p>You are about to submit your four source-based judgments. The next screen will show a reference summary. You will not be able to change these four answers afterwards. Please check them before continuing.</p><dl id="review-answers" class="review-answers"></dl><div class="dialog-actions"><button id="review-back" class="button secondary" type="button">Back to edit</button><button id="confirm-lock" class="button primary" type="button">Lock answers and show reference</button></div></dialog>
+
+    <dialog id="qualification-optin-dialog" class="qualification-dialog">
+      <p class="eyebrow">Optional one-time pilot</p>
+      <h2>Start the qualification pilot?</h2>
+      <p>This pilot has 10 comparisons and uses the same five preferences and two-stage reference workflow. Your choices are saved as you go. You will see the comparison with the provisional AI-suggested labels only after all 10 are complete.</p>
+      <p>Starting is a one-time choice for this workspace. Study comparisons will remain locked until you meet the initial threshold of 15 out of 18 preselected judgments. Your existing saved answers are kept. The suggested labels are not yet validated, so the result is not an objective measure of annotation quality.</p>
+      <div class="dialog-actions"><button id="qualification-optin-cancel" class="button secondary" type="button">Cancel</button><button id="qualification-optin-confirm" class="button primary" type="button">Start one-time pilot</button></div>
+    </dialog>
+
+    <dialog id="qualification-result-dialog" class="qualification-dialog">
+      <p class="eyebrow">Qualification pilot result</p>
+      <h2 id="qualification-result-heading">Qualification result</h2>
+      <p id="qualification-result-summary"></p>
+      <div class="dialog-actions"><button id="qualification-result-close" class="button secondary" type="button">Review result details</button><button id="qualification-continue-study" class="button primary" type="button" hidden>Continue to study</button></div>
+    </dialog>
 
     <dialog id="problem-dialog"><p class="eyebrow">Separate from your preferences</p><h2>Report a problem</h2><p>No preference will be inferred from this report. Your existing saved answers will be retained.</p><label for="problem-category">Problem category</label><select id="problem-category"><option value="">Choose a category</option><option value="text_missing_or_unreadable">Text missing or unreadable</option><option value="materials_appear_mismatched">Materials appear mismatched</option><option value="cannot_interpret_material_reliably">Cannot interpret the material reliably</option><option value="accidental_selection_after_submission">Accidental selection after submission</option><option value="other_interface_problem">Other interface problem</option></select><fieldset id="problem-criteria"><legend>Affected criteria</legend></fieldset><div class="dialog-actions"><button id="problem-cancel" class="button secondary" type="button">Cancel</button><button id="problem-submit" class="button primary" type="button">Send report</button></div></dialog>
 

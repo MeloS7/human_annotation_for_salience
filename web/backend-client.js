@@ -1,5 +1,5 @@
 const RPC_ACTIONS = new Set([
-  "session", "acknowledge", "task", "save", "lock", "reference", "complete", "problem", "export",
+  "session", "acknowledge", "task", "save", "lock", "reference", "complete", "problem", "export", "qualification_results", "start_qualification",
   "enroll", "recover", "rotate_recovery",
 ]);
 const TASK_ACTIONS = new Set(["task", "save", "lock", "reference", "complete", "problem"]);
@@ -87,12 +87,14 @@ export function mapAppRequest(path, payload) {
   const body = payload === undefined ? {} : payload;
   if (!isRecord(body)) throw new AnnotationBackendError(400, "Request data must be an object.");
 
-  if (["/api/session", "/api/export"].includes(path) && payload === undefined) {
-    return { type: "rpc", action: path.slice("/api/".length), taskId: null, payload: {} };
+  if (["/api/session", "/api/export", "/api/qualification-results"].includes(path) && payload === undefined) {
+    const action = path === "/api/qualification-results" ? "qualification_results" : path.slice("/api/".length);
+    return { type: "rpc", action, taskId: null, payload: {} };
   }
   const noTaskActions = new Map([
     ["/api/acknowledge", "acknowledge"], ["/api/enroll", "enroll"],
     ["/api/recover", "recover"], ["/api/rotate-recovery", "rotate_recovery"],
+    ["/api/start-qualification", "start_qualification"],
   ]);
   if (noTaskActions.has(path) && payload !== undefined) {
     return { type: "rpc", action: noTaskActions.get(path), taskId: null, payload: body };

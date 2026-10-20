@@ -48,6 +48,34 @@ Each volunteer receives the complete frozen study plus two active practice tasks
 
 Apply `supabase/migrations/20261018010000_two_practice_tasks.sql` in a transaction before deploying the matching frontend. Do not reimport the study materials. The migration selects two persistent practice IDs per participant, prioritizing completed work and then unpaused work already started. Someone who has completed at least two practice comparisons can proceed directly to the study. It does not change existing task IDs, ordering, answers, revisions, lock/exposure timestamps or recovery credentials. Historical extra practice records remain in exports, identified by `practice_required: false`. Rerunning the migration does not reselect the two tasks. The frontend checks the server's two-practice protocol marker and fails closed if the database upgrade is missing.
 
+### Optional qualification pilot
+
+The qualification pilot is a one-time, explicit opt-in from the workspace. Merely deploying it does not enroll anyone or change the existing two-practice workflow. Starting the pilot preserves saved responses but replaces the active practice queue with ten qualification comparisons. Study access is then blocked by the database until qualification is passed. The same four-preferences-first, reference-second sequence applies to every item.
+
+The initial key is **LLM-suggested and not yet human-validated**. Only 18 preselected, relatively clear judgments count toward the provisional threshold of 15 matches. All 50 judgments are compared after completion, with overall, per-dimension and item-by-item exact agreement. The remaining judgments are exploratory. No suggested labels, counted-cell indicators or partial scores are returned before all ten comparisons are complete. A failed result does not establish poor annotation ability; this pilot is for checking the materials and key. There is no automatic reset or same-key retake after feedback has been revealed.
+
+Generate the private additive upgrade from the local review packet, outside this checkout:
+
+```bash
+python3 scripts/build-qualification-setup.py \
+  --research-root /path/to/private/research-checkout \
+  --output /path/to/private/qualification-pilot.sql \
+  --expected-output /path/to/private/qualification-expected.json
+```
+
+Execute that single SQL file in the Supabase SQL Editor. It includes the migration, private material/key import and final inventory checks in one transaction. It never opts participants in or overwrites answers; matching reruns skip immutable rows. Do not use the original study initializer to upgrade an activated pilot. Never commit the generated SQL or expected fixture, which contain sources, references and the answer key. The public migration alone contains no key and leaves the feature unavailable until the private inventory is complete.
+
+Before applying the upgrade online, verify the actual import in an isolated database:
+
+```bash
+node scripts/verify-qualification-upgrade.mjs \
+  /path/to/private/original-sql-editor-import \
+  /path/to/private/qualification-pilot.sql \
+  /path/to/private/qualification-expected.json
+```
+
+This checks exact material/orientation matching, legacy-progress preservation, repeat imports, blind feedback, pass/fail access, all three presentation schemes, recovery and exports. It does not contact the production database. Qualification outcomes are included in participant and coordinator exports, separately from formal study responses. Review the provisional key before using it as a recruitment filter.
+
 ### Access control and collection
 
 Keep `annotation_private` out of Supabase's exposed API schemas. Do not disable RLS or grant direct table/function access to make an error disappear. Only the public `annotation_api` boundary is granted to authenticated users. The SQL tests exercise deny paths as well as allowed operations.

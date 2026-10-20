@@ -1,7 +1,12 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const { STAGE_ONE_IDS, allStageChoicesPresent, criteriaForStage, displayAssignmentNumber, mayRequestReference, practiceProtocolReady, stageOf, studyGateOpen } = window.HumanPreferenceStageState;
+const {
+  STAGE_ONE_IDS, QUALIFICATION_DIMENSION_IDS, QUALIFICATION_KEY_STATUS, QUALIFICATION_PASS_COUNT,
+  allStageChoicesPresent, annotationProtocolReady, criteriaForStage, displayAssignmentNumber,
+  hasQualificationProtocol, mayRequestReference, qualificationAvailable,
+  qualificationIsComplete, qualificationResultsReady, stageOf, studyGateOpen,
+} = window.HumanPreferenceStageState;
 let session = null;
 let current = null;
 let pendingRecoveryCode = null;
@@ -14,6 +19,8 @@ let searchMatches = [];
 let searchPosition = -1;
 let searchTruncated = false;
 let sourceViewMode = "reading";
+let qualificationResults = null;
+let qualificationResultsError = null;
 
 class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -49,21 +56,42 @@ function readOnly(ctx = current) { return !ctx || ctx.task.status === "complete"
 function taskPath(id, suffix = "") { return `/api/task/${encodeURIComponent(id)}${suffix}`; }
 function preferencesFor(stage) { return criteriaForStage(session?.rubric?.criteria, stage); }
 function studyReady() { return studyGateOpen(session); }
+function qualificationActive() { return hasQualificationProtocol(session); }
+function protocolReady() { return annotationProtocolReady(session); }
+function initialQueueKind() {
+  if (qualificationActive()) return studyReady() ? "study" : "qualification";
+  return studyReady() ? "study" : "practice";
+}
 function showView(id) {
   for (const view of ["login-view", "recovery-view", "recovery-pending-view", "maintenance-view", "intro-view", "workspace"]) $(view).hidden = view !== id;
+}
+function clearQualificationResults() {
+  qualificationResults = null;
+  qualificationResultsError = null;
+  const panel = $("qualification-results-panel");
+  if (panel) panel.hidden = true;
+  const summary = $("qualification-results-summary");
+  if (summary) summary.textContent = "";
+  const table = $("qualification-results-table");
+  if (table) table.replaceChildren();
+  const items = $("qualification-items");
+  if (items) items.replaceChildren();
+  const dialog = $("qualification-result-dialog");
+  if (dialog?.open) dialog.close();
 }
 
 function showProtocolUpdateRequired() {
   current = null;
   clearComparison();
   $("task-list").replaceChildren();
-  $("maintenance-message").textContent = "The server has not confirmed the two-practice setup required for this version. Your saved progress is preserved, but annotation is paused until the coordinator updates the study setup.";
+  $("maintenance-message").textContent = "The server has not confirmed a supported annotation setup for this version. Your saved progress is preserved, but annotation is paused until the coordinator updates the study setup.";
   showView("maintenance-view");
 }
 
 function taskDisplayLabel(task) {
   const number = displayAssignmentNumber(task, session?.tasks);
   if (task.kind === "practice") return number === null ? "Practice" : `Practice ${number}`;
+  if (task.kind === "qualification") return number === null ? "Qualification" : `Qualification ${number}`;
   return number === null ? "Comparison" : `Comparison ${String(number).padStart(3, "0")}`;
 }
 
@@ -105,6 +133,33 @@ function showAccount() {
   $("mode-badge").textContent = "Private workspace";
   $("mode-badge").className = "badge";
   $("participant-label").textContent = enrolled ? String(session.display_name) : "";
+  if ($("qualification-opt-in")) {
+    $("qualification-opt-in").hidden = !enrolled || !session.accepted_instructions ||
+      !qualificationAvailable(session) || qualificationActive();
+  }
+}
+
+function renderQualificationNotices() {
+  const active = qualificationActive();
+  const available = qualificationAvailable(session);
+  const introNote = $("qualification-intro-note");
+  if (introNote) {
+    introNote.hidden = !active && !available;
+    introNote.textContent = active
+      ? "For this pilot, complete the qualification comparisons below instead of the practice comparisons mentioned in the instructions. The five criteria and the reference-release process are unchanged."
+      : available
+        ? "An optional qualification pilot is available after you accept these instructions. If you choose it, it replaces the two practice comparisons mentioned above with 10 qualification comparisons; study comparisons remain locked until you meet the pilot threshold."
+        : "";
+  }
+  const workspaceNote = $("qualification-workspace-note");
+  if (workspaceNote) {
+    workspaceNote.hidden = !active || qualificationIsComplete(session);
+    workspaceNote.textContent = active
+      ? "Complete all 10 pilot comparisons to see your result."
+      : "";
+  }
+  const offer = $("qualification-offer");
+  if (offer) offer.hidden = !available || active;
 }
 
 function freezeWorkspace(reason) {
@@ -142,9 +197,14 @@ function downloadRecoveryCode() {
 }
 
 async function refreshSession() {
-  session = await api("/api/session");
+  const nextSession = await api("/api/session");
+  if (session?.participant_id && session.participant_id !== nextSession?.participant_id) {
+    clearQualificationResults();
+  }
+  session = nextSession;
   showAccount();
   if (!session.authenticated || !session.enrolled) {
+    clearQualificationResults();
     current = null;
     clearComparison();
     $("entry-status").textContent = session.authenticated
@@ -177,35 +237,212 @@ async function refreshSession() {
     showRecoveryConfirmation(uid, pending.code);
     return;
   }
-  if (!practiceProtocolReady(session)) {
+  if (!protocolReady()) {
     showProtocolUpdateRequired();
     return;
   }
   renderGuide($("intro-guide"), session.guide_md || "");
   renderGuide($("dialog-guide"), session.guide_md || "");
+  renderQualificationNotices();
   if (!session.accepted_instructions) { showView("intro-view"); return; }
   showView("workspace");
   renderQueue();
 }
 
+const QUALIFICATION_LABELS = Object.freeze({
+  source_coverage: "Source coverage",
+  reference_coverage: "Reference coverage",
+  readability: "Readability",
+  faithfulness: "Faithfulness",
+  content_focus: "Content focus",
+});
+
+function showQualificationOutcome(state, matched, total) {
+  const passed = state === "passed";
+  $("qualification-result-heading").textContent = passed ? "Qualification passed" : "Qualification not passed";
+  $("qualification-result-summary").textContent = `You agreed with the provisional AI-suggested labels on ${matched} of ${total} preselected judgments. The pilot threshold is ${QUALIFICATION_PASS_COUNT} of ${total}. This is a comparison with an unvalidated suggestion key, not an objective measure of annotation quality.`;
+  $("qualification-continue-study").hidden = !passed;
+  if (!$("qualification-result-dialog").open) $("qualification-result-dialog").showModal();
+}
+
+function appendResultCell(row, text, tag = "td") {
+  const cell = document.createElement(tag);
+  cell.textContent = String(text);
+  row.append(cell);
+  return cell;
+}
+
+function scrollQualificationResultsHeadingIntoView() {
+  const panel = $("qualification-results-panel");
+  const heading = $("qualification-results-heading");
+  if (!panel?.hidden && heading) heading.scrollIntoView({ block: "start", behavior: "instant" });
+}
+
+function renderQualificationResultsPanel(results = null, error = null) {
+  const panel = $("qualification-results-panel");
+  panel.hidden = false;
+  $("qualification-results-table").replaceChildren();
+  $("qualification-items").replaceChildren();
+  $("qualification-results-retry").hidden = !error;
+  $("qualification-results-download").hidden = !results;
+  $("qualification-continue-study-panel").hidden = !(results?.state === "passed");
+
+  if (!results) {
+    $("qualification-results-summary").textContent = error
+      ? "All 10 qualification comparisons are saved, but the result breakdown could not be loaded. Retry to retrieve the comparison; do not repeat completed tasks."
+      : "Loading your qualification comparison…";
+    scrollQualificationResultsHeadingIntoView();
+    return;
+  }
+
+  const passed = results.state === "passed";
+  $("qualification-results-summary").textContent = `${passed ? "Passed" : "Not passed"}: ${results.matched} of ${results.total} preselected judgments match the provisional AI-suggested labels. At least ${results.pass_count} of ${results.total} are required for this pilot. This agreement is not an objective accuracy score; the remaining judgments are exploratory and do not affect the result.`;
+  const table = $("qualification-results-table");
+  const header = document.createElement("tr");
+  for (const label of ["Dimension", "Counted for threshold", "All 10 items (exploratory)"]) appendResultCell(header, label, "th");
+  table.append(header);
+  for (const id of QUALIFICATION_DIMENSION_IDS) {
+    const dimension = results.dimensions.find((entry) => entry.id === id);
+    const row = document.createElement("tr");
+    appendResultCell(row, QUALIFICATION_LABELS[id]);
+    const scoredPercent = dimension.scored_percent === null ? "n/a" : `${dimension.scored_percent.toFixed(1)}%`;
+    appendResultCell(row, `${dimension.scored_matched}/${dimension.scored_total} (${scoredPercent})`);
+    appendResultCell(row, `${dimension.all_matched}/${dimension.all_total} (${dimension.all_percent.toFixed(1)}%)`);
+    table.append(row);
+  }
+  const overallRow = document.createElement("tr");
+  appendResultCell(overallRow, "All five dimensions");
+  appendResultCell(overallRow, `${results.matched}/${results.total} (${results.percent.toFixed(1)}%)`);
+  appendResultCell(overallRow, `${results.overall.matched}/${results.overall.total} (${results.overall.percent.toFixed(1)}%)`);
+  table.append(overallRow);
+
+  const items = $("qualification-items");
+  for (const item of [...results.items].sort((left, right) => left.number - right.number)) {
+    const details = document.createElement("details");
+    details.className = "qualification-item-result";
+    const summary = document.createElement("summary");
+    summary.textContent = `Q${String(item.number).padStart(2, "0")} · ${item.dataset === "cnndm" ? "CNN/DM" : "GUMSum"} · ${item.title_zh}`;
+    details.append(summary);
+    const list = document.createElement("ul");
+    for (const dimension of [...item.dimensions].sort((left, right) => QUALIFICATION_DIMENSION_IDS.indexOf(left.id) - QUALIFICATION_DIMENSION_IDS.indexOf(right.id))) {
+      const line = document.createElement("li");
+      const status = dimension.scored ? (dimension.matches ? "Counted · matched" : "Counted · did not match") : (dimension.matches ? "Exploratory · matched" : "Exploratory · did not match");
+      const prefix = `${QUALIFICATION_LABELS[dimension.id]} — your choice: ${dimension.answer}; provisional label: ${dimension.suggested}; ${status}.`;
+      line.append(document.createTextNode(prefix));
+      if (typeof dimension.rationale_zh === "string" && dimension.rationale_zh.trim()) {
+        const rationale = document.createElement("span");
+        rationale.className = "qualification-rationale";
+        rationale.textContent = ` Provisional-key rationale: ${dimension.rationale_zh}`;
+        line.append(rationale);
+      }
+      list.append(line);
+    }
+    details.append(list);
+    items.append(details);
+  }
+  scrollQualificationResultsHeadingIntoView();
+}
+
+async function loadQualificationResults({ notify = false } = {}) {
+  if (!qualificationIsComplete(session)) throw new ApiError(409, "Finish all 10 qualification comparisons before viewing the result.");
+  const expectedUid = await window.HumanAnnotationBackend.identityUid();
+  if (!expectedUid) throw new ApiError(401, "Your private sign-in is unavailable. Keep this page open and retry.");
+  try {
+    const results = await api("/api/qualification-results", undefined, expectedUid);
+    if (!qualificationResultsReady(results) || results.version !== session.qualification.version ||
+        results.state !== session.qualification.state || results.matched !== session.qualification.score?.matched) {
+      throw new ApiError(502, "The qualification service returned an incomplete or inconsistent result. Your saved answers are unchanged; contact the coordinator before continuing.");
+    }
+    qualificationResults = results;
+    qualificationResultsError = null;
+    renderQualificationResultsPanel(results);
+    if (notify) showQualificationOutcome(results.state, results.matched, results.total);
+    return results;
+  } catch (error) {
+    qualificationResultsError = error;
+    renderQualificationResultsPanel(null, error);
+    if (notify && Number.isInteger(session.qualification.score?.matched)) {
+      showQualificationOutcome(session.qualification.state, session.qualification.score.matched, session.qualification.score.total);
+    }
+    throw error;
+  }
+}
+
+async function showQualificationResults({ notify = false } = {}) {
+  // Results can be opened from the workspace while a study comparison is
+  // active. Finish its debounced save before replacing that view.
+  await flushSave();
+  current = null;
+  clearComparison();
+  $("empty-state").hidden = true;
+  $("qualification-results-panel").hidden = false;
+  if (qualificationResults) {
+    renderQualificationResultsPanel(qualificationResults);
+    if (notify) showQualificationOutcome(qualificationResults.state, qualificationResults.matched, qualificationResults.total);
+    return qualificationResults;
+  }
+  renderQualificationResultsPanel(null, qualificationResultsError);
+  return loadQualificationResults({ notify });
+}
+
+async function downloadQualificationResults() {
+  if (!qualificationResults || !qualificationIsComplete(session)) {
+    await loadQualificationResults();
+  }
+  if (!qualificationResults) return;
+  const blob = new Blob([JSON.stringify(qualificationResults, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `qualification-pilot-${session.participant_id}.json`;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function queueTasks() { return session.tasks.filter((task) => task.kind === activeKind).sort((a, b) => a.position - b.position); }
 function renderQueue() {
-  if (!session || !session.authenticated || !session.accepted_instructions || !practiceProtocolReady(session)) return;
+  if (!session || !session.authenticated || !session.accepted_instructions || !protocolReady()) return;
+  const qualification = qualificationActive();
+  $("practice-tab").hidden = qualification;
+  $("qualification-tab").hidden = !qualification;
+  $("qualification-offer").hidden = qualification || !qualificationAvailable(session);
+  $("qualification-results-button").hidden = !qualification || !qualificationIsComplete(session) || activeKind === "qualification";
   $("study-tab").classList.toggle("active", activeKind === "study");
   $("practice-tab").classList.toggle("active", activeKind === "practice");
+  $("qualification-tab").classList.toggle("active", activeKind === "qualification");
   $("study-tab").setAttribute("aria-pressed", String(activeKind === "study"));
   $("practice-tab").setAttribute("aria-pressed", String(activeKind === "practice"));
+  $("qualification-tab").setAttribute("aria-pressed", String(activeKind === "qualification"));
   $("study-total").textContent = session.progress.study_total;
-  $("practice-total").textContent = session.progress.practice_total;
+  $("practice-total").textContent = session.progress.practice_total ?? 0;
+  $("qualification-total").textContent = qualification ? session.qualification.required : (session.qualification_available?.required ?? 10);
   const tasks = queueTasks();
   const complete = tasks.filter((task) => task.status === "complete").length;
   $("progress-label").textContent = `${complete} of ${tasks.length} completed`;
   $("progress-percent").textContent = tasks.length ? `${Math.round(100 * complete / tasks.length)}%` : "0%";
   $("progress-bar").max = Math.max(1, tasks.length);
   $("progress-bar").value = complete;
-  $("queue-note").textContent = activeKind === "practice"
-    ? "Practice answers are not included in the study results."
-    : studyReady() ? "Your answers and progress are private to this workspace." : "Complete both practice comparisons before starting the study.";
+  const qualificationComplete = qualification && qualificationIsComplete(session);
+  $("resume-button").textContent = activeKind === "qualification"
+    ? qualificationComplete ? "Review qualification result" : "Resume next qualification comparison"
+    : "Resume next comparison";
+  let queueNote;
+  if (activeKind === "qualification") {
+    queueNote = qualificationComplete
+      ? "All 10 pilot comparisons are complete. Review your qualification result."
+      : "Suggested labels and the result breakdown remain hidden until all 10 comparisons are complete.";
+  } else if (activeKind === "practice") {
+    queueNote = "Practice answers are not included in the study results.";
+  } else if (studyReady()) {
+    queueNote = qualificationComplete
+      ? "Your qualification result is available to review; study comparisons are ready to continue."
+      : "Your answers and progress are private to this workspace.";
+  } else {
+    queueNote = qualification
+      ? "Pass the qualification pilot before opening study comparisons."
+      : "Complete both practice comparisons before starting the study.";
+  }
+  $("queue-note").textContent = queueNote;
   $("task-list").replaceChildren();
   for (const task of tasks) {
     if ($("unfinished-only").checked && task.status === "complete" && (!current || current.task.id !== task.id)) continue;
@@ -233,6 +470,7 @@ function clearComparison() {
 }
 function emptyState(title, text, actionLabel = "", action = null) {
   clearComparison();
+  $("qualification-results-panel").hidden = true;
   $("empty-state").hidden = false;
   $("empty-heading").textContent = title;
   $("empty-description").textContent = text;
@@ -243,6 +481,22 @@ function emptyState(title, text, actionLabel = "", action = null) {
 
 async function selectKind(kind) {
   await busy(async () => {
+    if (kind === "study" && !studyReady()) {
+      await flushSave();
+      activeKind = qualificationActive() ? "qualification" : "practice";
+      renderQueue();
+      await resumeNext({ skipSave: true });
+      return;
+    }
+    if (kind === "qualification" && (!qualificationActive() || qualificationIsComplete(session))) {
+      if (qualificationActive() && qualificationIsComplete(session)) {
+        activeKind = "qualification";
+        renderQueue();
+        await showQualificationResults();
+      }
+      return;
+    }
+    if (kind === "practice" && qualificationActive()) return;
     await flushSave();
     current = null;
     activeKind = kind;
@@ -253,10 +507,21 @@ async function selectKind(kind) {
 
 async function resumeNext({ skipSave = false, afterCurrent = false } = {}) {
   if (!skipSave) await flushSave();
-  if (!practiceProtocolReady(session)) { showProtocolUpdateRequired(); return; }
+  if (!protocolReady()) { showProtocolUpdateRequired(); return; }
   if (activeKind === "study" && !studyReady()) {
+    if (qualificationActive()) {
+      activeKind = "qualification";
+      renderQueue();
+      return resumeNext({ skipSave: true, afterCurrent });
+    }
     current = null;
     emptyState("Start with practice", "Complete both practice comparisons to become familiar with the two-stage workflow. Practice does not contribute to the study results.", "Go to practice", () => selectKind("practice"));
+    return;
+  }
+  if (activeKind === "qualification" && qualificationIsComplete(session)) {
+    current = null;
+    await showQualificationResults();
+    renderQueue();
     return;
   }
   const tasks = queueTasks();
@@ -266,6 +531,8 @@ async function resumeNext({ skipSave = false, afterCurrent = false } = {}) {
   current = null;
   if (activeKind === "practice" && tasks.length && tasks.every((task) => task.status === "complete")) {
     emptyState("Practice complete", "You have finished the practice comparisons. You can now begin the study comparisons.", "Begin study comparisons", () => selectKind("study"));
+  } else if (activeKind === "qualification" && tasks.length && tasks.every((task) => task.status === "complete")) {
+    await showQualificationResults();
   } else if (tasks.some((task) => task.status === "paused")) {
     emptyState("No unpaused comparisons remain", "The remaining comparisons have been reported for review. Your saved work is retained. You can download your responses or contact the study coordinator.");
   } else {
@@ -277,9 +544,23 @@ async function resumeNext({ skipSave = false, afterCurrent = false } = {}) {
 async function loadTask(id, { skipSave = false } = {}) {
   if (current && current.task.id === id && !skipSave) return;
   const requestedTask = session?.tasks?.find((task) => task.id === id);
-  if (!practiceProtocolReady(session)) { showProtocolUpdateRequired(); return; }
+  if (!protocolReady()) { showProtocolUpdateRequired(); return; }
   if (requestedTask?.kind === "study" && !studyReady()) {
+    if (qualificationActive()) {
+      activeKind = "qualification";
+      if (qualificationIsComplete(session)) await showQualificationResults();
+      else {
+        renderQueue();
+        await resumeNext();
+      }
+      return;
+    }
     emptyState("Start with practice", "Complete both practice comparisons before starting the study.", "Go to practice", () => selectKind("practice"));
+    return;
+  }
+  if (requestedTask?.kind === "qualification" && qualificationIsComplete(session)) {
+    activeKind = "qualification";
+    await showQualificationResults();
     return;
   }
   await busy(async () => {
@@ -321,9 +602,12 @@ function renderTask() {
   if (!current) return;
   const { task } = current;
   const stage = stageOf(task);
+  $("qualification-results-panel").hidden = true;
   $("empty-state").hidden = true;
   $("comparison-view").hidden = false;
-  $("task-kind").textContent = task.kind === "practice" ? "Practice · not part of study results" : "Your independent assessment";
+  $("task-kind").textContent = task.kind === "practice" ? "Practice · not part of study results"
+    : task.kind === "qualification" ? "Optional qualification pilot · provisional key"
+      : "Your independent assessment";
   $("task-title").textContent = taskDisplayLabel(task);
   $("task-state").textContent = task.status === "complete" ? "Completed · read only" : task.status === "paused" ? "Paused for review" : stage === 2 ? "First four answers locked" : "Reference not shown";
   $("task-state").className = `badge ${task.status === "complete" ? "complete" : task.status === "paused" ? "paused" : stage === 2 ? "locked" : ""}`;
@@ -448,7 +732,7 @@ function allAnswered() {
 }
 function updateControls() {
   const disabled = busyDepth > 0 || identityFrozen;
-  for (const id of ["enroll-button", "recover-button", "continue-after-recovery", "retry-recovery-operation", "instructions-button", "export-button", "rotate-recovery-button", "switch-participant-button", "study-tab", "practice-tab", "resume-button", "pause-button", "problem-button", "confirm-lock", "review-back", "problem-submit", "problem-cancel", "pause-download", "pause-resume", "reference-retry", "retry-save", "reload-state", "rotate-confirm", "switch-confirm"]) if ($(id)) $(id).disabled = disabled;
+  for (const id of ["enroll-button", "recover-button", "continue-after-recovery", "retry-recovery-operation", "instructions-button", "export-button", "rotate-recovery-button", "switch-participant-button", "qualification-opt-in", "qualification-results-button", "qualification-results-retry", "qualification-results-download", "qualification-continue-study-panel", "qualification-tab", "study-tab", "practice-tab", "resume-button", "pause-button", "problem-button", "confirm-lock", "review-back", "problem-submit", "problem-cancel", "pause-download", "pause-resume", "reference-retry", "retry-save", "reload-state", "rotate-confirm", "switch-confirm", "qualification-optin-confirm", "qualification-optin-cancel", "qualification-result-close", "qualification-continue-study"]) if ($(id)) $(id).disabled = disabled;
   $("continue-after-recovery").disabled = disabled || !$("recovery-saved-check").checked;
   $("switch-confirm").disabled = disabled || !$("switch-recovery-check").checked;
   $("begin-button").disabled = disabled || !$("guide-ack").checked;
@@ -497,13 +781,46 @@ async function lockStageOne() {
 async function completeComparison() {
   await busy(async () => {
     const ctx = current;
+    const completedKind = ctx.task.kind;
     await flushSave(ctx);
     await api(taskPath(ctx.task.id, "/complete"), { revision: ctx.task.revision, answers: { reference_coverage: ctx.answers.reference_coverage } }, ctx.authUid);
     await refreshSession();
     current = null;
+    if (completedKind === "qualification" && qualificationIsComplete(session)) {
+      activeKind = "qualification";
+      renderQueue();
+      await showQualificationResults({ notify: true });
+      return;
+    }
     await resumeNext({ skipSave: true });
     showNotice("Comparison submitted. Your progress has been saved.");
   });
+}
+
+async function startQualificationPilot() {
+  if (!qualificationAvailable(session) || qualificationActive()) throw new ApiError(409, "The qualification pilot is not currently available for this workspace.");
+  if (!session.accepted_instructions) throw new ApiError(403, "Read and accept the annotation instructions before starting the optional pilot.");
+  await flushSave();
+  const backend = window.HumanAnnotationBackend;
+  const uid = await backend.identityUid();
+  if (!uid) throw new ApiError(401, "Your private sign-in is unavailable. Keep this tab open and retry.");
+  await api("/api/start-qualification", {}, uid);
+  clearQualificationResults();
+  current = null;
+  clearComparison();
+  try {
+    await refreshSession();
+  } catch (error) {
+    showProtocolUpdateRequired();
+    throw error;
+  }
+  if (!qualificationActive() || !protocolReady()) {
+    throw new ApiError(502, "The service did not confirm that this workspace entered the pilot. Existing answers remain saved; reload the workspace before retrying.");
+  }
+  activeKind = "qualification";
+  showView("workspace");
+  renderQueue();
+  await resumeNext({ skipSave: true });
 }
 
 async function reportProblem() {
@@ -717,7 +1034,7 @@ $("continue-after-recovery").addEventListener("click", () => run(() => busy(asyn
   pendingRecoveryCode = null;
   await refreshSession();
   if (session.authenticated && session.enrolled && session.accepted_instructions) {
-    activeKind = studyReady() ? "study" : "practice";
+    activeKind = initialQueueKind();
     await resumeNext({ skipSave: true });
   }
 })));
@@ -738,7 +1055,7 @@ $("begin-button").addEventListener("click", () => run(() => busy(async () => {
   if (!authUid) throw new ApiError(401, "Your private sign-in is unavailable. Please retry without switching participants.");
   await api("/api/acknowledge", { accepted: true }, authUid);
   await refreshSession();
-  activeKind = studyReady() ? "study" : "practice";
+  activeKind = initialQueueKind();
   await resumeNext({ skipSave: true });
 })));
 $("instructions-button").addEventListener("click", () => $("guide-dialog").showModal());
@@ -762,6 +1079,7 @@ $("switch-confirm").addEventListener("click", () => run(() => busy(async () => {
   await window.HumanAnnotationBackend.switchParticipant();
   $("switch-dialog").close();
   session = null;
+  clearQualificationResults();
   showAccount();
   await refreshSession();
 })));
@@ -792,6 +1110,32 @@ $("rotate-confirm").addEventListener("click", () => run(() => busy(async () => {
 })));
 $("study-tab").addEventListener("click", () => run(() => selectKind("study")));
 $("practice-tab").addEventListener("click", () => run(() => selectKind("practice")));
+$("qualification-tab").addEventListener("click", () => run(() => selectKind("qualification")));
+$("qualification-opt-in").addEventListener("click", () => {
+  if (!qualificationAvailable(session) || qualificationActive()) return;
+  $("qualification-optin-dialog").showModal();
+});
+$("qualification-optin-cancel").addEventListener("click", () => $("qualification-optin-dialog").close());
+$("qualification-optin-confirm").addEventListener("click", () => run(() => busy(async () => {
+  $("qualification-optin-dialog").close();
+  await startQualificationPilot();
+})));
+$("qualification-results-button").addEventListener("click", () => run(() => busy(async () => {
+  activeKind = "qualification";
+  renderQueue();
+  await showQualificationResults();
+})));
+$("qualification-results-retry").addEventListener("click", () => run(() => busy(async () => {
+  await loadQualificationResults();
+  renderQueue();
+})));
+$("qualification-results-download").addEventListener("click", () => run(downloadQualificationResults));
+$("qualification-continue-study-panel").addEventListener("click", () => run(() => selectKind("study")));
+$("qualification-result-close").addEventListener("click", () => $("qualification-result-dialog").close());
+$("qualification-continue-study").addEventListener("click", () => run(async () => {
+  $("qualification-result-dialog").close();
+  await selectKind("study");
+}));
 $("unfinished-only").addEventListener("change", renderQueue);
 $("resume-button").addEventListener("click", () => run(() => busy(() => resumeNext())));
 $("criteria-form").addEventListener("submit", (event) => event.preventDefault());
@@ -840,7 +1184,7 @@ run(async () => {
   showView("login-view");
   await refreshSession();
   if (session.authenticated && session.accepted_instructions) {
-    activeKind = studyReady() ? "study" : "practice";
+    activeKind = initialQueueKind();
     await resumeNext({ skipSave: true });
   }
 });

@@ -51,3 +51,29 @@ The private generator imports frozen templates/settings only, no participants or
 The additive two-practice migration retains all existing rows and snapshots. A private, participant-row-serialized helper selects exactly two required practice IDs once, prioritizing completed, then unpaused started, then unpaused untouched, then paused tasks. Existing IDs, positions, answers and lock state never change. Repeated migration/session calls keep the same subset. Exports retain all practice rows and their practice_required flags, so archival work is not lost. The migration locks the participants table before altering assignments to avoid lock-order inversion with in-flight RPCs. Run it in a transaction.
 
 Coordinator-only private SQL functions: resolve_problem(p_participant_id text,p_task_id text) and export_all() including private matching metadata but no recovery_hash/Auth credentials. Only DB owner may call. Public volunteer responses make no claims about distinct natural persons, quality or representative sampling; coordinator vets data separately. Public signup should use Supabase's anonymous-Auth rate limits and, for broad public distribution, Turnstile/CAPTCHA. No automatic pruning of anonymous users or study records.
+
+## Optional qualification pilot (additive v1)
+
+The `20261020000000_qualification_pilot.sql` migration adds a dormant, explicit opt-in pilot. All legacy participant IDs, answers, events, recovery hashes, orders and lock/exposure timestamps remain unchanged. The coordinator privately seeds ten article-disjoint examples in each of the three presentation schemes and activates `settings.qualification_version`. This makes the pilot available; it does not pin any participant to it. The existing guide/rubric and their fingerprints remain frozen. A separate workflow notice explains the optional replacement of practice, without changing the five criteria.
+
+Private additions:
+
+- `qualification_sets`: version, immutable inventory fingerprint, item_count=10, scored_total=18, pass_count=15, key_status=`llm_suggested_unvalidated`.
+- `qualification_keys`: one row per template, containing version, Q01–Q10 identifier, dataset, coordinator review title and five suggestions `{label,scored,rationale_zh,confidence}`. All suggestions and scored-cell flags stay private until completion.
+- `qualification_results`: one immutable evaluated snapshot per participant. No evaluation or feedback before ten fully completed comparisons.
+- `participants.qualification_version`: nullable, pinned only by explicit opt-in. `qualification` is an additional template/assignment kind; the original eight practice records remain retained but are not active during the pilot.
+
+Two authenticated, no-task actions with exactly `{}` payload:
+
+- `start_qualification`: requires guide acknowledgement, locks the participant row and pins the available version once. It creates or reuses ten assignments from the participant's own scheme, with persistent randomized order. Retries preserve all answers/order and never reset the attempt. Returns a full active-pilot session. Unopted participants cannot fetch hidden qualification IDs.
+- `qualification_results`: returns the immutable snapshot only after all ten comparisons are complete. Earlier calls fail PT403. It never returns material/reference text or credentials.
+
+Unopted sessions retain the original 128 active tasks and two-practice gate, optionally adding `qualification_available:{protocol:"qualification-pilot-v1",version,key_status,required:10,scored_total:18,pass_count:15}`. Active-pilot sessions contain exactly 136 tasks (10 qualification,126 study), `progress.qualification_total=10`, `qualification_completed`, zero active practice counts and `qualification:{protocol,version,key_status,required:10,completed,state,scored_total:18,pass_count:15,score,completed_at}`. Before completion, state is `in_progress` and both score/completed_at are null. At completion score is `{matched,total:18}`, state is `passed` iff matched>=15, otherwise `failed`.
+
+For opted-in participants, every study task/action is database-gated on the persisted passed result, including previously started study tasks. A failed participant may review/download results but cannot open study materials. Qualification keeps the identical Stage1 lock, separate reference exposure, CAS, immutable completion and problem-report workflow. Recovery preserves the version, answers, gates and result.
+
+The result contains `version,key_status,state,matched,total,pass_count,percent,evaluated_at`, `overall:{matched,total:50,percent}`, five dimension rows `{id,scored_matched,scored_total,scored_percent,all_matched,all_total:10,all_percent}` and ten item rows `{id,number,qualification_id,dataset,title_zh,dimensions:[{id,answer,suggested,matches,scored,rationale_zh}]}`. These are exact-label agreement counts, not preference win rates or objective human accuracy. A zero-denominator scored percentage is null. All item answers and aggregates must agree; the frontend fails closed on inconsistent counts/results.
+
+Private write guards freeze activated versions, keys and qualification templates, and freeze completed result snapshots. Private imports compare exact existing rows and skip writes on matching retries. No caller can submit a score, suggested label, pass flag or version via the public RPC. New/helper tables have RLS and no direct anon/authenticated access. Existing public RPC behavior is retained behind a private, non-callable legacy helper.
+
+Own exports append `qualification_assignments` and `qualification_result` (null until completion), without removing archival practice or study data. Coordinator `export_all()` includes corresponding private matching metadata. No material/reference or key appears in participant exports before completion, and no recovery credential appears in either export. Qualification records are separate from the 126 formal study records.
