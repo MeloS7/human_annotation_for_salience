@@ -5,7 +5,7 @@ const {
   STAGE_ONE_IDS, QUALIFICATION_DIMENSION_IDS, QUALIFICATION_PASS_COUNT,
   QUALIFICATION_CONFIRMED_SCORED_COUNT,
   allStageChoicesPresent, annotationProtocolReady, criteriaForStage, displayAssignmentNumber,
-  mayRequestReference,
+  mayRequestReference, studyAllocationInfo, studyPackageFull,
   qualificationIsComplete, qualificationResultsReady, stageOf, studyGateOpen,
 } = window.HumanPreferenceStageState;
 let session = null;
@@ -57,9 +57,11 @@ function readOnly(ctx = current) { return !ctx || ctx.task.status === "complete"
 function taskPath(id, suffix = "") { return `/api/task/${encodeURIComponent(id)}${suffix}`; }
 function preferencesFor(stage) { return criteriaForStage(session?.rubric?.criteria, stage); }
 function studyReady() { return studyGateOpen(session); }
+function fixedPackageFull() { return studyPackageFull(session); }
 function qualificationActive() { return session?.qualification_required === true; }
 function protocolReady() { return annotationProtocolReady(session); }
 function initialQueueKind() {
+  if (fixedPackageFull()) return "study";
   return studyReady() ? "study" : "qualification";
 }
 function showView(id) {
@@ -136,12 +138,16 @@ function showAccount() {
 
 function renderQualificationNotices() {
   const active = qualificationActive();
+  const allocation = studyAllocationInfo(session);
+  const studyTarget = allocation.studyTarget;
   const introNote = $("qualification-intro-note");
   if (introNote) {
     introNote.hidden = !active;
-    introNote.textContent = active
-      ? `Complete 10 qualification comparisons first. Study comparisons unlock after at least ${QUALIFICATION_PASS_COUNT} of 18 human-confirmed judgments match. The same five criteria and two-stage reference process apply.`
-      : "";
+    introNote.textContent = !active ? "" : allocation.full
+      ? `You passed the qualification, but all nine study packages have already been assigned. Please contact the study coordinator.`
+      : allocation.mode === "legacy"
+        ? `Complete 10 qualification comparisons first. Study comparisons unlock after at least ${QUALIFICATION_PASS_COUNT} of 18 human-confirmed judgments match. Your existing queue of ${studyTarget} study comparisons is preserved. The same five criteria and two-stage reference process apply.`
+        : `Complete 10 qualification comparisons first. Study comparisons unlock after at least ${QUALIFICATION_PASS_COUNT} of 18 human-confirmed judgments match. You will then receive ${studyTarget} assigned study comparisons. The same five criteria and two-stage reference process apply.`;
   }
   const workspaceNote = $("qualification-workspace-note");
   if (workspaceNote) {
@@ -249,11 +255,14 @@ const QUALIFICATION_LABELS = Object.freeze({
 
 function showQualificationOutcome(state, matched, total) {
   const passed = state === "passed";
+  const packageFull = passed && fixedPackageFull();
   $("qualification-result-heading").textContent = passed ? "Qualification passed" : "Qualification not passed";
   $("qualification-result-summary").textContent = passed
-    ? `You matched ${matched} of ${total} human-confirmed judgments. At least ${QUALIFICATION_PASS_COUNT} matches are required to continue to the study.`
+    ? packageFull
+      ? `You matched ${matched} of ${total} human-confirmed judgments and passed. All nine study packages have already been assigned. Please contact the study coordinator; no additional tasks have been opened.`
+      : `You matched ${matched} of ${total} human-confirmed judgments. At least ${QUALIFICATION_PASS_COUNT} matches are required to continue to the study.`
     : `You matched ${matched} of ${total} human-confirmed judgments. At least ${QUALIFICATION_PASS_COUNT} matches are required to continue, so study comparisons remain locked.`;
-  $("qualification-continue-study").hidden = !passed;
+  $("qualification-continue-study").hidden = !passed || packageFull;
   if (!$("qualification-result-dialog").open) $("qualification-result-dialog").showModal();
 }
 
@@ -277,7 +286,7 @@ function renderQualificationResultsPanel(results = null, error = null) {
   $("qualification-items").replaceChildren();
   $("qualification-results-retry").hidden = !error;
   $("qualification-results-download").hidden = !results;
-  $("qualification-continue-study-panel").hidden = !(results?.state === "passed");
+  $("qualification-continue-study-panel").hidden = !(results?.state === "passed") || fixedPackageFull();
 
   if (!results) {
     $("qualification-results-summary").textContent = error
@@ -288,7 +297,8 @@ function renderQualificationResultsPanel(results = null, error = null) {
   }
 
   const passed = results.state === "passed";
-  $("qualification-results-summary").textContent = `${passed ? "Passed" : "Not passed"}: ${results.matched} of ${results.total} human-confirmed judgments matched. At least ${results.pass_count} are required to continue to the study. The other 32 AI suggestions are shown for exploration and do not affect the qualification result.`;
+  const packageFull = passed && fixedPackageFull();
+  $("qualification-results-summary").textContent = `${passed ? "Passed" : "Not passed"}: ${results.matched} of ${results.total} human-confirmed judgments matched. ${packageFull ? "All nine study packages have already been assigned; please contact the study coordinator." : `At least ${results.pass_count} are required to continue to the study.`} The other 32 AI suggestions are shown for exploration and do not affect the qualification result.`;
   const table = $("qualification-results-table");
   const header = document.createElement("tr");
   for (const label of ["Dimension", "Confirmed labels (counted)", "All judgments (incl. 32 exploratory)"]) appendResultCell(header, label, "th");
@@ -404,12 +414,13 @@ function renderQueue() {
   $("qualification-tab").classList.toggle("active", activeKind === "qualification");
   $("study-tab").setAttribute("aria-pressed", String(activeKind === "study"));
   $("qualification-tab").setAttribute("aria-pressed", String(activeKind === "qualification"));
-  $("study-total").textContent = session.progress.study_total;
+  $("study-total").textContent = studyAllocationInfo(session).studyTarget;
   $("qualification-total").textContent = session.qualification.required;
   const tasks = queueTasks();
   const complete = tasks.filter((task) => task.status === "complete").length;
-  $("progress-label").textContent = `${complete} of ${tasks.length} completed`;
-  $("progress-percent").textContent = tasks.length ? `${Math.round(100 * complete / tasks.length)}%` : "0%";
+  const noStudyPackage = activeKind === "study" && fixedPackageFull();
+  $("progress-label").textContent = noStudyPackage ? "No study package assigned" : `${complete} of ${tasks.length} completed`;
+  $("progress-percent").textContent = noStudyPackage ? "—" : tasks.length ? `${Math.round(100 * complete / tasks.length)}%` : "0%";
   $("progress-bar").max = Math.max(1, tasks.length);
   $("progress-bar").value = complete;
   const qualificationComplete = qualification && qualificationIsComplete(session);
@@ -422,13 +433,18 @@ function renderQueue() {
       ? "All 10 qualification comparisons are complete. Review your result."
       : "Your score and suggested labels remain hidden until all 10 comparisons are complete.";
   } else if (studyReady()) {
-    queueNote = qualificationComplete
+    queueNote = studyAllocationInfo(session).mode === "legacy"
+      ? "Your existing 126-comparison queue is preserved so earlier answers and locked choices remain unchanged. You can resume your saved work."
+      : qualificationComplete
       ? "Your qualification is passed. Study comparisons are ready to continue."
       : "Your answers and progress are private to this workspace.";
+  } else if (fixedPackageFull()) {
+    queueNote = "You passed qualification, but all nine study packages have been assigned. Contact the study coordinator.";
   } else {
     queueNote = "Pass the qualification before opening study comparisons.";
   }
   $("queue-note").textContent = queueNote;
+  $("resume-button").disabled = busyDepth > 0 || identityFrozen || noStudyPackage;
   $("task-list").replaceChildren();
   for (const task of tasks) {
     if ($("unfinished-only").checked && task.status === "complete" && (!current || current.task.id !== task.id)) continue;
@@ -468,6 +484,13 @@ function emptyState(title, text, actionLabel = "", action = null) {
 async function selectKind(kind) {
   await busy(async () => {
     if (kind === "study" && !studyReady()) {
+      if (fixedPackageFull()) {
+        current = null;
+        activeKind = "study";
+        renderQueue();
+        emptyState("No study package available", "You passed the qualification, but all nine study packages have been assigned. Your result and progress are preserved. Please contact the study coordinator.");
+        return;
+      }
       await flushSave();
       activeKind = "qualification";
       renderQueue();
@@ -494,6 +517,12 @@ async function selectKind(kind) {
 async function resumeNext({ skipSave = false, afterCurrent = false } = {}) {
   if (!skipSave) await flushSave();
   if (!protocolReady()) { showProtocolUpdateRequired(); return; }
+  if (activeKind === "study" && fixedPackageFull()) {
+    current = null;
+    emptyState("No study package available", "You passed the qualification, but all nine study packages have been assigned. Your result and progress are preserved. Please contact the study coordinator.");
+    renderQueue();
+    return;
+  }
   if (activeKind === "study" && !studyReady()) {
     activeKind = "qualification";
     renderQueue();
@@ -711,6 +740,7 @@ function updateControls() {
   $("continue-after-recovery").disabled = disabled || !$("recovery-saved-check").checked;
   $("switch-confirm").disabled = disabled || !$("switch-recovery-check").checked;
   $("begin-button").disabled = disabled || !$("guide-ack").checked;
+  $("resume-button").disabled = disabled || (activeKind === "study" && fixedPackageFull());
   for (const button of $("task-list").querySelectorAll("button")) {
     button.disabled = disabled || (button.dataset.kind === "study" && !studyReady());
   }

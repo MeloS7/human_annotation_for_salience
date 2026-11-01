@@ -1,6 +1,9 @@
 export const STAGE_ONE_IDS = Object.freeze(["source_coverage", "readability", "faithfulness", "content_focus"]);
 export const STAGE_TWO_IDS = Object.freeze(["reference_coverage"]);
 export const REQUIRED_STUDY_COUNT = 126;
+export const FIXED_PACKAGE_STUDY_COUNT = 42;
+export const FIXED_PACKAGE_PROTOCOL = "fixed-packages-v1";
+export const FIXED_PACKAGE_VERSION = "fixed-packages-20261101-v1";
 export const REQUIRED_PRACTICE_COUNT = 2;
 export const REQUIRED_QUALIFICATION_COUNT = 10;
 export const QUALIFICATION_SCORED_TOTAL = 18;
@@ -31,6 +34,51 @@ function validTaskQueue(tasks, kind, expectedCount) {
   return positions.size === expectedCount;
 }
 
+function studyAllocation(session) {
+  // Sessions produced before fixed packages remain valid during a rolling
+  // deployment. Their mandatory-qualification queue still has 126 study
+  // tasks; fixed-package sessions carry an explicit allocation contract.
+  if (!Object.prototype.hasOwnProperty.call(session || {}, "allocation")) {
+    return { valid: true, mode: "legacy", state: "legacy", packageId: null,
+      studyTarget: REQUIRED_STUDY_COUNT, queueCount: REQUIRED_STUDY_COUNT, fixed: false, full: false };
+  }
+
+  const value = session.allocation;
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      value.protocol !== FIXED_PACKAGE_PROTOCOL || value.version !== FIXED_PACKAGE_VERSION) {
+    return { valid: false };
+  }
+
+  if (value.mode === "legacy" && value.state === "legacy" && value.package_id === null &&
+      value.study_target === REQUIRED_STUDY_COUNT) {
+    return { valid: true, mode: "legacy", state: "legacy", packageId: null,
+      studyTarget: REQUIRED_STUDY_COUNT, queueCount: REQUIRED_STUDY_COUNT, fixed: false, full: false };
+  }
+
+  if (value.mode !== "fixed" || value.study_target !== FIXED_PACKAGE_STUDY_COUNT) {
+    return { valid: false };
+  }
+  if (value.state === "assigned" && typeof value.package_id === "string" &&
+      /^package_0[1-9]$/.test(value.package_id)) {
+    return { valid: true, mode: "fixed", state: "assigned", packageId: value.package_id,
+      studyTarget: FIXED_PACKAGE_STUDY_COUNT, queueCount: FIXED_PACKAGE_STUDY_COUNT, fixed: true, full: false };
+  }
+  if ((value.state === "qualification" || value.state === "full") && value.package_id === null) {
+    return { valid: true, mode: "fixed", state: value.state, packageId: null,
+      studyTarget: FIXED_PACKAGE_STUDY_COUNT, queueCount: 0, fixed: true, full: value.state === "full" };
+  }
+  return { valid: false };
+}
+
+export function studyPackageFull(session) {
+  const allocation = studyAllocation(session);
+  return allocation.valid && allocation.full;
+}
+
+export function studyAllocationInfo(session) {
+  return studyAllocation(session);
+}
+
 export function practiceProtocolReady(session) {
   const progress = session?.progress;
   if (progress?.practice_requirement !== REQUIRED_PRACTICE_COUNT ||
@@ -58,6 +106,7 @@ export function qualificationProtocolReady(session) {
   const qualification = session?.qualification;
   const progress = session?.progress;
   const tasks = session?.tasks;
+  const allocation = studyAllocation(session);
   if (session?.qualification_required !== true || session?.workflow_version !== WORKFLOW_VERSION ||
       typeof session?.workflow_guide_md !== "string" || !session.workflow_guide_md.trim() ||
       typeof session?.workflow_guide_sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(session.workflow_guide_sha256) ||
@@ -70,19 +119,22 @@ export function qualificationProtocolReady(session) {
       qualification.scored_total !== QUALIFICATION_SCORED_TOTAL || qualification.pass_count !== QUALIFICATION_PASS_COUNT ||
       !Number.isInteger(qualification.completed) || qualification.completed < 0 || qualification.completed > REQUIRED_QUALIFICATION_COUNT ||
       !["in_progress", "passed", "failed"].includes(qualification.state) ||
-      !progress || progress.study_total !== REQUIRED_STUDY_COUNT || progress.qualification_total !== REQUIRED_QUALIFICATION_COUNT ||
+      !allocation.valid || !progress || progress.study_total !== allocation.queueCount || progress.qualification_total !== REQUIRED_QUALIFICATION_COUNT ||
       progress.qualification_completed !== qualification.completed || progress.practice_total !== 0 ||
       progress.practice_completed !== 0 || progress.practice_requirement !== 0 ||
-      !Number.isInteger(progress.study_completed) || progress.study_completed < 0 || progress.study_completed > REQUIRED_STUDY_COUNT ||
-      !Number.isInteger(progress.paused) || progress.paused < 0 || progress.paused > REQUIRED_STUDY_COUNT + REQUIRED_QUALIFICATION_COUNT ||
-      !Array.isArray(tasks) || tasks.length !== REQUIRED_STUDY_COUNT + REQUIRED_QUALIFICATION_COUNT) return false;
+      !Number.isInteger(progress.study_completed) || progress.study_completed < 0 || progress.study_completed > allocation.queueCount ||
+      !Number.isInteger(progress.paused) || progress.paused < 0 || progress.paused > allocation.queueCount + REQUIRED_QUALIFICATION_COUNT ||
+      !Array.isArray(tasks) || tasks.length !== allocation.queueCount + REQUIRED_QUALIFICATION_COUNT) return false;
 
-  if (!validTaskQueue(tasks, "study", REQUIRED_STUDY_COUNT) ||
+  if (!validTaskQueue(tasks, "study", allocation.queueCount) ||
       !validTaskQueue(tasks, "qualification", REQUIRED_QUALIFICATION_COUNT)) return false;
   if (tasks.some((task) => task.kind !== "study" && task.kind !== "qualification") ||
       new Set(tasks.map((task) => task.id)).size !== tasks.length ||
       tasks.filter((task) => task.status === "paused").length !== progress.paused) return false;
   if (tasks.filter((task) => task.kind === "study" && task.status === "complete").length !== progress.study_completed) return false;
+  if ((allocation.state === "qualification" && qualification.state === "passed") ||
+      (allocation.state === "full" && qualification.state !== "passed") ||
+      (allocation.state === "assigned" && qualification.state !== "passed")) return false;
 
   const qualificationTasks = tasks.filter((task) => task.kind === "qualification");
   const completedCount = qualificationTasks.filter((task) => task.status === "complete").length;
@@ -113,7 +165,9 @@ export function qualificationIsComplete(session) {
 }
 
 export function studyGateOpen(session) {
-  return qualificationProtocolReady(session) && session.qualification.state === "passed";
+  if (!qualificationProtocolReady(session) || session.qualification.state !== "passed") return false;
+  const allocation = studyAllocation(session);
+  return allocation.valid && (allocation.state === "assigned" || allocation.state === "legacy");
 }
 
 function percentageMatches(value, matched, total) {

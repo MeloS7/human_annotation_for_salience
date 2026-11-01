@@ -6,6 +6,9 @@ dist/
 private/
 *-private.sql
 *-private.json
+*.private.json
+package_0[1-9].json
+*handoff*.zip
 credentials.json
 bundle.json
 runtime-state/

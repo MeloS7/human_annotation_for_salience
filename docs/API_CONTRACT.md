@@ -1,5 +1,9 @@
 # Open-participation annotation boundary
 
+The fixed-package section at the end supersedes the historical per-participant
+126-study allocation for fixed-mode participants. The mandatory 14/18
+qualification and two-stage reference boundary are unchanged.
+
 The mandatory-policy section at the end supersedes the legacy practice and optional-pilot access rules below. Historical storage and migration contracts remain documented for reproducibility, not as current access paths.
 
 This supersedes the unpublished fixed-three-account prototype. The Pages site contains code and public Supabase configuration only. Never publish real sources, summaries, references, recovery codes, assignments/method mappings or responses. Synthetic test fixtures are allowed. Import the exact v2 guide/rubric and frozen templates privately through the coordinator SQL Editor.
@@ -93,3 +97,66 @@ The original `qualification_results` rows remain immutable snapshots. `_current_
 Exports include current `qualification_result` and unchanged `qualification_original_result`, alongside qualification, study and archival practice assignments. Current policy/workflow metadata distinguish the policy projection from the original record. No actual answer, ID, event, revision, lock, reference exposure or recovery credential is overwritten by migration or policy activation. A single final read-only SQL result reports activation/threshold metadata; private import is safely rerunnable without attempted mutations to immutable rows.
 
 Editing behavior is unchanged: draft choices can be revised before lock; Stage 1 cannot change after reference release; completed qualification and study submissions remain immutable. Reports of accidental submitted choices are separate events, not a silent reset or label overwrite.
+
+## Fixed packages (current allocation upgrade)
+
+`20261101010000_fixed_packages.sql` is dormant until the coordinator imports the
+private frozen plan and activates `settings.assignment_version`. The version is
+`fixed-packages-20261101-v1`. Nine packages each contain 42 study comparisons;
+126 distinct study items each occur in exactly three packages. Package membership
+and order reference the existing private templates, not duplicated or rewritten
+article/summary/reference strings. The private static package JSONs and the
+Supabase plan derive from the same generator. See `MTURK_HANDOFF.md` for another
+backend's contract and the private handoff contents.
+
+Sessions retain the mandatory-qualification fields and add `allocation`:
+
+```json
+{
+  "protocol": "fixed-packages-v1",
+  "version": "fixed-packages-20261101-v1",
+  "mode": "fixed",
+  "state": "assigned",
+  "package_id": "package_01",
+  "study_target": 42
+}
+```
+
+For fixed mode, `state` is `qualification` before a pass, `assigned` after an
+atomic slot claim, or `full` if all nine slots are occupied. Qualification and
+full sessions have ten qualification tasks, no study tasks and
+`progress.study_total=0`; the target remains 42. Assigned sessions have ten
+qualification plus 42 study tasks with one-based package positions.
+`progress.study_total=42`; study completion and paused counts cover only active
+tasks. A failed qualification never consumes a slot. A repeated session/recovery
+reuses the same package, and no browser-supplied package choice is accepted.
+
+Historical participants with evidence of any started study comparison receive
+`mode: legacy`, `state: legacy`, `package_id: null`, `study_target:126`. Their
+original queue is preserved and they do not occupy one of the nine slots.
+Existing qualification assignments, order, orientation, answers and result
+snapshots remain unchanged for everyone. Newly enrolled fixed-cohort participants
+use the common canonical scheme-1 Q01–Q10 qualification order matching the private
+JSON packages. Legacy study rows retained behind a fixed participant's package
+are archival, not extra active tasks. Direct requests to an unselected historical
+study ID are denied for every task action, including stale-client requests.
+
+Claims use a serialized database allocator and unique participant/package
+constraints. All study IDs remain participant-owned. Stage-1-safe task responses
+show package `position` and `total:42`; reference still appears only in the
+separate post-lock reference response. Auth, recovery, revision CAS, immutable
+submission and the 14/18 gate retain their preceding behavior. There is no
+automatic slot release or timeout reassignment.
+
+Exports retain historical study rows and append allocation metadata. Study rows
+are marked `allocation_role: active_package`, `archival_legacy`, or
+`legacy_active`; active rows also carry `package_id` and `package_position`.
+Read-only coordinator exports may report `state:awaiting_assignment` for an
+eligible participant who has not yet requested a session and while slots remain;
+they must not claim a slot as a side effect of exporting. Participant export
+scope and credential exclusions are unchanged.
+
+The frontend accepts the preceding mandatory-qualification session without an
+allocation field during a rolling deployment. Once present, allocation version,
+state, eligibility and task counts are strictly checked. An unavailable package
+is displayed as unavailable, never as an empty completed study.

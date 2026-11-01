@@ -16,6 +16,12 @@ Successful saves are confirmed by the server before being labelled saved. Keep t
 
 Qualification feedback appears only after all ten comparisons are submitted. Eighteen preselected judgments use a coordinator-confirmed standard; the other 32 retain exploratory AI suggestions and do not affect passing. Submitted qualification answers cannot be changed or retried after feedback. Stage 1 preferences are editable only before the reference is released; report an accidental submitted choice rather than overwriting it.
 
+With the fixed-package upgrade active, a passed participant receives **42 study
+comparisons**, in one persistent package. There are nine slots; an additional
+passed participant sees a full notice rather than sharing an occupied slot.
+Already-started historical study queues are protected separately so existing
+answers and reference locks are not reset.
+
 ## Architecture and privacy
 
 - Public repository/Pages: HTML, CSS, JavaScript, dependency lockfile, public Supabase project URL/publishable key, schema migrations and synthetic tests. The source-layout asset contains hashes and structural offsets only.
@@ -25,6 +31,29 @@ Qualification feedback appears only after all ten comparisons are submitted. Eig
 - Recovery: 256-bit browser-generated codes; only their SHA-256 hashes are stored. Recovery atomically rotates the code and rebinds the identity. Codes, hashes, access tokens and refresh tokens are excluded from exports and event payloads.
 
 No service-role key, secret API key, database password or real study bundle belongs in this repository. A public/publishable key is intentionally public and does not grant application access without the authenticated RPC checks.
+
+## Fixed packages and MTurk handoff
+
+The coordinator privately generates nine self-contained JSON packages, each
+containing the same ten qualification items plus 42 preassigned study items.
+Each of the 126 distinct study items occurs in three packages. The static data
+format is backend-neutral; the live site imports the same frozen membership
+into Supabase, while another deployment may use its own private server storage.
+**Complete packages and qualification keys must never be frontend assets.**
+
+See [the engineer handoff](docs/MTURK_HANDOFF.md) for the workflow, file formats,
+platform adapter boundary, security requirements and acceptance checklist.
+`scripts/build-fixed-packages.py` generates the private packet;
+`scripts/build-fixed-packages-setup.py` prepares an additive private SQL import;
+`scripts/build-mturk-handoff.py` bundles the materials, documentation and a
+credential-free source snapshot for private delivery. The scripts refuse public
+output destinations and never connect to JZ or another data source.
+
+The fixed allocation is versioned as `fixed-packages-20261101-v1`. Package claims
+occur only after a qualification pass and survive recovery. Private imports and
+migrations retain all historical records. The frontend accepts the preceding
+mandatory-qualification contract during a rolling upgrade; the 42-item workflow
+activates only when the coordinator has imported and enabled the private plan.
 
 ## Coordinator setup
 
@@ -44,7 +73,7 @@ The generator validates the frozen materials and assignment plans and refuses to
 
 An optional `--expected-output /path/to/private/expected-private.json` writes a private verification fixture. Check a complete import offline with `node scripts/verify-private-import.mjs /path/to/private/sql-editor-import /path/to/private/expected-private.json`. This verifies exact material hashes, repeat-import persistence and recovery against a disposable database, not the production project.
 
-Three prevalidated, balanced presentation schemes are rotated across enrollments; each volunteer's task order is independently shuffled and stored. Recovery retains the same scheme/order. The private template pool retains eight historical practice examples per scheme for storage compatibility. The current mandatory workflow displays none of these: its active queue is ten qualification plus 126 study comparisons. All historical practice records remain in storage and exports rather than being deleted. The online installation does not import earlier local preview answers.
+The original installation rotates three prevalidated presentation schemes across enrollments and stores each volunteer's shuffled order. Recovery retains that order. The private template pool retains eight historical practice examples per scheme for storage compatibility, but the mandatory workflow displays none of them. Before the fixed-package upgrade, its active queue is ten qualification plus 126 study comparisons. The fixed-package upgrade above replaces that allocation for eligible fixed-mode participants without deleting historical practice or study records. The online installation does not import earlier local preview answers.
 
 ### Upgrading an existing eight-practice installation
 
