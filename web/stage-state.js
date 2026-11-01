@@ -4,9 +4,12 @@ export const REQUIRED_STUDY_COUNT = 126;
 export const REQUIRED_PRACTICE_COUNT = 2;
 export const REQUIRED_QUALIFICATION_COUNT = 10;
 export const QUALIFICATION_SCORED_TOTAL = 18;
-export const QUALIFICATION_PASS_COUNT = 15;
-export const QUALIFICATION_PROTOCOL = "qualification-pilot-v1";
-export const QUALIFICATION_KEY_STATUS = "llm_suggested_unvalidated";
+export const QUALIFICATION_PASS_COUNT = 14;
+export const QUALIFICATION_PROTOCOL = "qualification-required-v2";
+export const QUALIFICATION_KEY_VERSION = "qualification-pilot-20261020-v1";
+export const QUALIFICATION_KEY_STATUS = "human_confirmed_scored";
+export const QUALIFICATION_CONFIRMED_SCORED_COUNT = 18;
+export const WORKFLOW_VERSION = "qualification-required-20261101-v1";
 export const QUALIFICATION_DIMENSION_IDS = Object.freeze([
   "source_coverage", "reference_coverage", "readability", "faithfulness", "content_focus",
 ]);
@@ -55,9 +58,15 @@ export function qualificationProtocolReady(session) {
   const qualification = session?.qualification;
   const progress = session?.progress;
   const tasks = session?.tasks;
-  if (!qualification || typeof qualification !== "object" || Array.isArray(qualification) ||
+  if (session?.qualification_required !== true || session?.workflow_version !== WORKFLOW_VERSION ||
+      typeof session?.workflow_guide_md !== "string" || !session.workflow_guide_md.trim() ||
+      typeof session?.workflow_guide_sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(session.workflow_guide_sha256) ||
+      !qualification || typeof qualification !== "object" || Array.isArray(qualification) ||
       qualification.protocol !== QUALIFICATION_PROTOCOL || typeof qualification.version !== "string" || !qualification.version.trim() ||
+      qualification.version !== QUALIFICATION_KEY_VERSION || qualification.policy_version !== WORKFLOW_VERSION ||
+      qualification.required_for_study !== true ||
       qualification.key_status !== QUALIFICATION_KEY_STATUS || qualification.required !== REQUIRED_QUALIFICATION_COUNT ||
+      qualification.confirmed_scored_count !== QUALIFICATION_CONFIRMED_SCORED_COUNT ||
       qualification.scored_total !== QUALIFICATION_SCORED_TOTAL || qualification.pass_count !== QUALIFICATION_PASS_COUNT ||
       !Number.isInteger(qualification.completed) || qualification.completed < 0 || qualification.completed > REQUIRED_QUALIFICATION_COUNT ||
       !["in_progress", "passed", "failed"].includes(qualification.state) ||
@@ -96,7 +105,7 @@ export function hasQualificationProtocol(session) {
 }
 
 export function annotationProtocolReady(session) {
-  return hasQualificationProtocol(session) ? qualificationProtocolReady(session) : practiceProtocolReady(session);
+  return qualificationProtocolReady(session);
 }
 
 export function qualificationIsComplete(session) {
@@ -104,11 +113,7 @@ export function qualificationIsComplete(session) {
 }
 
 export function studyGateOpen(session) {
-  if (hasQualificationProtocol(session)) {
-    return qualificationProtocolReady(session) && session.qualification.state === "passed";
-  }
-  if (!practiceProtocolReady(session) || session.progress.practice_completed !== REQUIRED_PRACTICE_COUNT) return false;
-  return session.tasks.filter((task) => task?.kind === "practice").every((task) => task.status === "complete");
+  return qualificationProtocolReady(session) && session.qualification.state === "passed";
 }
 
 function percentageMatches(value, matched, total) {
@@ -120,6 +125,8 @@ function percentageMatches(value, matched, total) {
 export function qualificationResultsReady(results) {
   if (!results || typeof results !== "object" || Array.isArray(results) ||
       typeof results.version !== "string" || !results.version.trim() ||
+      results.version !== QUALIFICATION_KEY_VERSION || results.policy_version !== WORKFLOW_VERSION ||
+      results.confirmed_scored_count !== QUALIFICATION_CONFIRMED_SCORED_COUNT ||
       results.key_status !== QUALIFICATION_KEY_STATUS || !["passed", "failed"].includes(results.state) ||
       !Number.isInteger(results.matched) || results.matched < 0 || results.matched > QUALIFICATION_SCORED_TOTAL ||
       results.total !== QUALIFICATION_SCORED_TOTAL || results.pass_count !== QUALIFICATION_PASS_COUNT ||

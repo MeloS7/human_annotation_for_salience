@@ -6,13 +6,15 @@ A browser-based, two-stage human preference annotation interface. The frontend i
 
 1. Enter a nickname. No email address or password is required. Nicknames are display labels, not account credentials; two people may use the same nickname without sharing data.
 2. Save the private recovery code shown to you. It acts as an access key, so do not share it or include it in screenshots. Keep using the same browser to resume automatically.
-3. Read the instructions and complete two practice comparisons, then the study comparisons. You may save, pause and return; there is no need to finish in one session.
+3. Read the instructions and complete all ten qualification comparisons. At least **14 of 18** scored judgments must match the human-confirmed qualification key before the study opens. A failed or incomplete qualification cannot access study tasks. You may save, pause and return; there is no need to finish in one session.
 4. Choose A, B or Tie for source coverage, readability, faithfulness and content focus. Review and lock these four preferences before the reference is shown. Then judge reference coverage. Locked preferences cannot be edited.
 5. On another device, use **Recover progress** and your recovery code. Successful recovery issues a new code and invalidates the old one. The previous device loses access, but your answers, task order and lock states remain unchanged. Save the new code.
 
 The source panel preserves the existing Reading view, original-text view and search. Reading view uses neutral grey structural blocks and verified source spacing. Original text preserves the exact source text used for the study's LLM judging. These presentation controls do not change the material or your answers.
 
 Successful saves are confirmed by the server before being labelled saved. Keep the page open if saving fails. **Download my responses** exports your answer records for backup, not your recovery code. The recovery code has its own private download. Anyone with that code can recover the identity; a nickname alone cannot.
+
+Qualification feedback appears only after all ten comparisons are submitted. Eighteen preselected judgments use a coordinator-confirmed standard; the other 32 retain exploratory AI suggestions and do not affect passing. Submitted qualification answers cannot be changed or retried after feedback. Stage 1 preferences are editable only before the reference is released; report an accidental submitted choice rather than overwriting it.
 
 ## Architecture and privacy
 
@@ -42,13 +44,15 @@ The generator validates the frozen materials and assignment plans and refuses to
 
 An optional `--expected-output /path/to/private/expected-private.json` writes a private verification fixture. Check a complete import offline with `node scripts/verify-private-import.mjs /path/to/private/sql-editor-import /path/to/private/expected-private.json`. This verifies exact material hashes, repeat-import persistence and recovery against a disposable database, not the production project.
 
-Each volunteer receives the complete frozen study plus two active practice tasks. Three prevalidated, balanced presentation schemes are rotated across enrollments; each volunteer's task order is independently shuffled and stored. Recovery retains the same scheme/order. The private template pool retains eight practice examples per scheme; only two are shown and required. Extra historical practice records remain in storage and exports, rather than being deleted. The online installation does not import earlier local preview answers.
+Three prevalidated, balanced presentation schemes are rotated across enrollments; each volunteer's task order is independently shuffled and stored. Recovery retains the same scheme/order. The private template pool retains eight historical practice examples per scheme for storage compatibility. The current mandatory workflow displays none of these: its active queue is ten qualification plus 126 study comparisons. All historical practice records remain in storage and exports rather than being deleted. The online installation does not import earlier local preview answers.
 
 ### Upgrading an existing eight-practice installation
 
 Apply `supabase/migrations/20261018010000_two_practice_tasks.sql` in a transaction before deploying the matching frontend. Do not reimport the study materials. The migration selects two persistent practice IDs per participant, prioritizing completed work and then unpaused work already started. Someone who has completed at least two practice comparisons can proceed directly to the study. It does not change existing task IDs, ordering, answers, revisions, lock/exposure timestamps or recovery credentials. Historical extra practice records remain in exports, identified by `practice_required: false`. Rerunning the migration does not reselect the two tasks. The frontend checks the server's two-practice protocol marker and fails closed if the database upgrade is missing.
 
-### Optional qualification pilot
+### Historical optional qualification pilot
+
+This section documents the retired opt-in workflow. Apply the mandatory policy below for the current collection workflow.
 
 The qualification pilot is a one-time, explicit opt-in from the workspace. Merely deploying it does not enroll anyone or change the existing two-practice workflow. Starting the pilot preserves saved responses but replaces the active practice queue with ten qualification comparisons. Study access is then blocked by the database until qualification is passed. The same four-preferences-first, reference-second sequence applies to every item.
 
@@ -75,6 +79,41 @@ node scripts/verify-qualification-upgrade.mjs \
 ```
 
 This checks exact material/orientation matching, legacy-progress preservation, repeat imports, blind feedback, pass/fail access, all three presentation schemes, recovery and exports. It does not contact the production database. Qualification outcomes are included in participant and coordinator exports, separately from formal study responses. Review the provisional key before using it as a recruitment filter.
+
+### Mandatory qualification and confirmed scored key
+
+The current workflow supersedes the historical optional pilot. Qualification is required for every new or existing participant; the two-practice route is no longer an access path. Archival practice responses remain in storage and exports. Existing qualification answers, orders and locks are reused, so completing the pilot does not require a second attempt. Previously started study tasks are also gated until qualification is passed.
+
+The coordinator confirmed all 18 existing scored labels after a blind review. This confirms only those scored cells, not all 50 suggested judgments. The mandatory policy uses a **14/18** pass threshold. Original pilot snapshots (including their 15/18 threshold and initial key status) remain immutable. Current session/results project the new policy without rewriting those records; exports retain both the current `qualification_result` and the historical `qualification_original_result`.
+
+After the private study and pilot materials have been imported, explicitly generate the coordinator approval:
+
+```bash
+python3 scripts/build-mandatory-qualification-setup.py \
+  --research-root /path/to/private/research-checkout \
+  --review-result /path/to/private/completed-pilot-result.json \
+  --confirm-scored-key \
+  --output /path/to/private/mandatory-qualification.sql \
+  --approval-output /path/to/private/qualification-approval.json
+```
+
+Use `--confirm-scored-key` only after the coordinator has reviewed and approved the 18 scored suggestions, including initial disagreements. The script checks the review against the exact frozen presentation key. The generated SQL contains the additive migration and approval in one transaction; execute it once in Supabase SQL Editor. Matching reruns preserve work. The only displayed final query reports the current threshold, confirmed count and activation state. No candidate source or answer key is copied to public files.
+
+The workflow guide changes only its introductory practice/qualification paragraph. The five criteria and A/B/Tie definitions stay exactly as before. Both original instruction and new workflow metadata are retained for audit; an old acknowledgement is not represented as a new workflow acknowledgement.
+
+Offline integration check (no production connection):
+
+```bash
+node scripts/verify-mandatory-qualification.mjs \
+  /path/to/private/original-sql-editor-import \
+  /path/to/private/qualification-pilot.sql \
+  /path/to/private/mandatory-qualification.sql \
+  /path/to/private/qualification-approval.json \
+  /path/to/private/qualification-expected.json \
+  /path/to/private/completed-pilot-result.json
+```
+
+The current frontend fails closed if the mandatory policy is not installed. Stale clients cannot use the historical practice path to bypass the database gate. Do not re-run the original full study initializer over an activated policy; use additive upgrades only.
 
 ### Access control and collection
 

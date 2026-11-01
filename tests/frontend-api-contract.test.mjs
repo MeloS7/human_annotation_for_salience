@@ -109,7 +109,7 @@ test("stage helpers expose exactly four Stage 1 choices and one reference-only S
   assert.equal(allStageChoicesPresent({ stage: 2, locked_at: "now" }, { reference_coverage: "C" }), false);
 });
 
-test("two-practice protocol requires the backend marker, total, and exactly two active tasks", () => {
+test("historical practice protocol remains recognizable but can no longer open the study gate", () => {
   const session = {
     progress: { study_total: REQUIRED_STUDY_COUNT, practice_total: 2, practice_completed: 0, practice_requirement: 2 },
     tasks: [
@@ -125,7 +125,8 @@ test("two-practice protocol requires the backend marker, total, and exactly two 
     progress: { ...session.progress, practice_completed: 2 },
     tasks: session.tasks.map((task) => task.kind === "practice" ? { ...task, status: "complete" } : task),
   };
-  assert.equal(studyGateOpen(completedSession), true);
+  assert.equal(practiceProtocolReady(completedSession), true);
+  assert.equal(studyGateOpen(completedSession), false);
 
   for (const incompatible of [
     { ...session, progress: { ...session.progress, practice_requirement: undefined } },

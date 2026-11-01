@@ -5,7 +5,7 @@ import { AnnotationBackendError, mapAppRequest } from "../web/backend-client.js"
 import {
   annotationProtocolReady,
   displayAssignmentNumber,
-  qualificationAvailable,
+  practiceProtocolReady,
   qualificationProtocolReady,
   qualificationResultsReady,
   REQUIRED_QUALIFICATION_COUNT,
@@ -16,6 +16,8 @@ import {
   QUALIFICATION_PASS_COUNT,
   QUALIFICATION_PROTOCOL,
   QUALIFICATION_SCORED_TOTAL,
+  QUALIFICATION_KEY_VERSION,
+  WORKFLOW_VERSION,
 } from "../web/stage-state.js";
 
 function qualificationSession({ completed = 0, matched = null, state = "in_progress" } = {}) {
@@ -37,10 +39,17 @@ function qualificationSession({ completed = 0, matched = null, state = "in_progr
     authenticated: true,
     enrolled: true,
     accepted_instructions: true,
+    qualification_required: true,
+    workflow_version: WORKFLOW_VERSION,
+    workflow_guide_md: "# Annotation instructions\n\nMandatory qualification comes first.",
+    workflow_guide_sha256: "a".repeat(64),
     qualification: {
       protocol: QUALIFICATION_PROTOCOL,
-      version: "pilot-v1",
+      version: QUALIFICATION_KEY_VERSION,
+      policy_version: WORKFLOW_VERSION,
+      required_for_study: true,
       key_status: QUALIFICATION_KEY_STATUS,
+      confirmed_scored_count: 18,
       required: REQUIRED_QUALIFICATION_COUNT,
       completed,
       state,
@@ -108,7 +117,9 @@ function makeResults({ matched = 15, state = "passed" } = {}) {
     };
   });
   return {
-    version: "pilot-v1",
+    version: QUALIFICATION_KEY_VERSION,
+    policy_version: WORKFLOW_VERSION,
+    confirmed_scored_count: 18,
     key_status: QUALIFICATION_KEY_STATUS,
     state,
     matched,
@@ -122,45 +133,36 @@ function makeResults({ matched = 15, state = "passed" } = {}) {
   };
 }
 
-test("qualification is opt-in and leaves the exact legacy two-practice protocol usable", () => {
+test("legacy practice helpers remain available but never open the active study gate", () => {
   const legacy = {
-    qualification_available: {
-      protocol: QUALIFICATION_PROTOCOL,
-      version: "pilot-v1",
-      key_status: QUALIFICATION_KEY_STATUS,
-      required: REQUIRED_QUALIFICATION_COUNT,
-      scored_total: QUALIFICATION_SCORED_TOTAL,
-      pass_count: QUALIFICATION_PASS_COUNT,
-    },
     tasks: [
-      { id: "p1", kind: "practice", position: 2, status: "complete" },
-      { id: "p2", kind: "practice", position: 8, status: "complete" },
+      { id: "p1", kind: "practice", position: 1, status: "complete" },
+      { id: "p2", kind: "practice", position: 2, status: "complete" },
       ...Array.from({ length: REQUIRED_STUDY_COUNT }, (_, index) => ({ id: `s${index + 1}`, kind: "study", position: index + 1, status: "draft" })),
     ],
     progress: { study_total: REQUIRED_STUDY_COUNT, practice_total: 2, practice_completed: 2, practice_requirement: 2 },
   };
-  assert.equal(qualificationAvailable(legacy), true);
-  assert.equal(annotationProtocolReady(legacy), true);
+  assert.equal(practiceProtocolReady(legacy), true);
+  assert.equal(annotationProtocolReady(legacy), false);
   assert.equal(qualificationProtocolReady(legacy), false);
-  assert.equal(studyGateOpen(legacy), true);
-  assert.equal(qualificationAvailable({ ...legacy, qualification_available: { ...legacy.qualification_available, protocol: "future" } }), false);
+  assert.equal(studyGateOpen(legacy), false);
 });
 
-test("qualification gate requires ten completed items and the configured 15-of-18 score", () => {
+test("qualification gate requires ten completed items and at least 14 of 18 confirmed judgments", () => {
   const inProgress = qualificationSession({ completed: 9 });
   assert.equal(qualificationProtocolReady(inProgress), true);
   assert.equal(studyGateOpen(inProgress), false);
 
-  const passed = qualificationSession({ completed: 10, matched: 15, state: "passed" });
+  const passed = qualificationSession({ completed: 10, matched: 14, state: "passed" });
   assert.equal(qualificationProtocolReady(passed), true);
   assert.equal(studyGateOpen(passed), true);
 
-  const failed = qualificationSession({ completed: 10, matched: 14, state: "failed" });
+  const failed = qualificationSession({ completed: 10, matched: 13, state: "failed" });
   assert.equal(qualificationProtocolReady(failed), true);
   assert.equal(studyGateOpen(failed), false);
 
-  assert.equal(qualificationProtocolReady(qualificationSession({ completed: 10, matched: 15, state: "failed" })), false);
-  assert.equal(qualificationProtocolReady(qualificationSession({ completed: 9, matched: 15, state: "passed" })), false);
+  assert.equal(qualificationProtocolReady(qualificationSession({ completed: 10, matched: 13, state: "passed" })), false);
+  assert.equal(qualificationProtocolReady(qualificationSession({ completed: 9, matched: 14, state: "passed" })), false);
 });
 
 test("active qualification sessions fail closed on malformed counts, identities, and protocol versions", () => {
@@ -175,7 +177,14 @@ test("active qualification sessions fail closed on malformed counts, identities,
   badPausedCount.tasks[0].status = "paused";
   const badProtocol = structuredClone(valid);
   badProtocol.qualification.protocol = "qualification-pilot-v2";
-  for (const invalid of [badDuplicateId, badQCount, badStudyCount, badPausedCount, badProtocol]) {
+  const missingGate = structuredClone(valid);
+  delete missingGate.qualification_required;
+  const badGuide = structuredClone(valid);
+  badGuide.workflow_guide_sha256 = "bad-hash";
+  const wrongPolicy = structuredClone(valid);
+  wrongPolicy.qualification.policy_version = "old-policy";
+  for (const invalid of [badDuplicateId, badQCount, badStudyCount, badPausedCount, badProtocol, missingGate, badGuide, wrongPolicy]) {
+    assert.equal(annotationProtocolReady(invalid), false);
     assert.equal(qualificationProtocolReady(invalid), false);
     assert.equal(studyGateOpen(invalid), false);
   }
@@ -196,6 +205,8 @@ test("qualification results validate the hidden-until-complete 18-cell score and
   assert.equal(results.dimensions.find((dimension) => dimension.id === "content_focus").scored_percent, null);
   assert.equal(qualificationResultsReady({ ...results, matched: 14 }), false);
   assert.equal(qualificationResultsReady({ ...results, items: results.items.slice(0, 9) }), false);
+  assert.equal(qualificationResultsReady({ ...results, confirmed_scored_count: 17 }), false);
+  assert.equal(qualificationResultsReady({ ...results, policy_version: "old-policy" }), false);
 
   const duplicateNumber = structuredClone(results);
   duplicateNumber.items[1].number = duplicateNumber.items[0].number;
@@ -210,7 +221,7 @@ test("qualification results validate the hidden-until-complete 18-cell score and
   assert.equal(qualificationResultsReady(noOptionalRationale), true);
 });
 
-test("pilot routes map to private RPC actions and results have no pre-completion client path", async () => {
+test("qualification routes retain the private result action and no pre-completion client result path", async () => {
   assert.deepEqual(mapAppRequest("/api/start-qualification", {}), {
     type: "rpc", action: "start_qualification", taskId: null, payload: {},
   });
@@ -228,21 +239,21 @@ test("pilot routes map to private RPC actions and results have no pre-completion
   const resultRenderer = app.slice(app.indexOf("function renderQualificationResultsPanel"), loaderStart);
   assert.match(resultRenderer, /\.textContent/);
   assert.doesNotMatch(resultRenderer, /innerHTML/);
-  const startPilot = app.slice(app.indexOf("async function startQualificationPilot"), app.indexOf("async function reportProblem"));
-  assert.ok(startPilot.indexOf("await flushSave()") < startPilot.indexOf('api("/api/start-qualification"'));
-  assert.ok(startPilot.indexOf('api("/api/start-qualification"') < startPilot.indexOf("current = null"));
-  assert.ok(startPilot.indexOf("current = null") < startPilot.indexOf("await refreshSession()"));
-  assert.ok(startPilot.indexOf("await refreshSession()") < startPilot.indexOf("await resumeNext({ skipSave: true })"));
+  assert.doesNotMatch(app, /startQualificationPilot|\/api\/start-qualification/);
   const showResults = app.slice(app.indexOf("async function showQualificationResults"), app.indexOf("async function downloadQualificationResults"));
   assert.ok(showResults.indexOf("await flushSave()") < showResults.indexOf("current = null"));
   const selectQueue = app.slice(app.indexOf("async function selectKind"), app.indexOf("async function resumeNext"));
   assert.ok(selectQueue.indexOf('kind === "study" && !studyReady()') < selectQueue.indexOf("await flushSave()"));
-  assert.ok(selectQueue.indexOf("await flushSave()") < selectQueue.indexOf('activeKind = qualificationActive() ? "qualification" : "practice"'));
+  assert.ok(selectQueue.indexOf("await flushSave()") < selectQueue.indexOf('activeKind = "qualification"'));
 
   const html = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
   assert.match(html, /id="qualification-results-panel"[^>]*hidden/);
   assert.match(html, /<tbody id="qualification-results-table"><\/tbody>/);
   assert.match(html, /id="qualification-items"[^>]*><\/div>/);
+  assert.doesNotMatch(html, /practice-tab|practice-total|qualification-optin|Optional pilot|Try qualification pilot/);
+  assert.match(html, /confirmed by a human/);
+  assert.match(app, /session\.workflow_guide_md/);
+  assert.doesNotMatch(app, /session\.guide_md/);
 });
 
 test("qualification results scroll clear of the sticky header and remain readable in a short sidebar", async () => {
@@ -253,8 +264,8 @@ test("qualification results scroll clear of the sticky header and remain readabl
 
   const queue = app.slice(app.indexOf("function renderQueue()"), app.indexOf("function clearComparison()"));
   assert.match(queue, /qualificationComplete\s*\?\s*"Review qualification result"/);
-  assert.match(queue, /All 10 pilot comparisons are complete\. Review your qualification result\./);
-  assert.match(queue, /Your qualification result is available to review/);
+  assert.match(queue, /All 10 qualification comparisons are complete\. Review your result\./);
+  assert.match(queue, /Your qualification is passed\. Study comparisons are ready to continue\./);
 
   const css = await readFile(new URL("../web/app.css", import.meta.url), "utf8");
   assert.match(css, /#qualification-results-heading\s*\{\s*scroll-margin-top:\s*102px;/);
