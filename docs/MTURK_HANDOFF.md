@@ -43,6 +43,8 @@ explicit slot coordination and participant deduplication.
 | `package_01.json` ... `package_09.json` | Self-contained, frozen materials in display order: `qualification` then `study`. |
 | `manifest.private.json` | Package versions, checksums and inventory. Verify before import. |
 | `qualification_key.private.json` | Private qualification labels, scored-cell mask and 14/18 threshold. |
+| `qualification_feedback_en.private.json` (English packet only) | English titles and five dimension rationales for all 30 qualification presentation templates. It carries no answer labels. |
+| `english_handoff_report.private.json` (English packet only) | Checksums and preservation checks for the English presentation-only derivative. |
 | `analysis_mapping.private.json` | Coordinator-only canonical method/stratum mapping. Never send to workers. |
 | `assignment_plan.private.json` | Private package membership and existing template identifiers for our Supabase importer. Another backend can use the package JSONs directly. |
 | `validation_report.json` | Coverage, overlap and balance checks on the frozen allocation. |
@@ -61,6 +63,26 @@ public authorization token. A task's `payload` contains `request`, `source`,
 reading view may format known context markers and original boundaries, but the
 Original text view must retain the original source text. Keep the exact supplied
 rubric and Tie definition; do not add justification-writing requirements.
+
+For the English qualification handoff, the derived key uses schema
+`qualification-key-private-en-v1` and exposes `title_en` plus
+`judgments[dimension].rationale_en`. Its paired feedback catalog has one row per
+qualification `template_id`, with `title_en` and `rationales_en` keyed by the
+five dimension IDs. Scheme-specific rationale wording is already aligned to
+that template's A/B order; do not swap it again. Keep the key and feedback file
+server-side. The legacy Supabase audit snapshot may retain its original
+`title_zh`/`rationale_zh`; this is not a request to rewrite historical database
+rows. The package JSONs, assignment version, task order, labels and scored mask
+are unchanged in this presentation-only derivative.
+
+To build the derivative from the coordinator's immutable original packet, run
+the included `scripts/build-english-handoff.py` with the original packet
+directory, the private expanded English feedback JSON, and a new output path
+named `english_handoff_v1` directly under the original packet directory. The
+builder verifies the source manifest and refuses to overwrite either packet.
+Then pass the derived directory to `scripts/build-mturk-handoff.py` to create
+the private engineer ZIP. The coordinator must keep the original packet and
+translation source private; neither belongs in this public repository.
 
 ## 3. Two-stage reference boundary (required)
 

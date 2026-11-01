@@ -12,6 +12,8 @@ import {
   REQUIRED_STUDY_COUNT,
   studyGateOpen,
   QUALIFICATION_DIMENSION_IDS,
+  QUALIFICATION_FEEDBACK_LANGUAGE,
+  QUALIFICATION_FEEDBACK_VERSION,
   QUALIFICATION_KEY_STATUS,
   QUALIFICATION_PASS_COUNT,
   QUALIFICATION_PROTOCOL,
@@ -96,14 +98,14 @@ function makeResults({ matched = 15, state = "passed" } = {}) {
         counts.all_matched += 1;
         allMatched += 1;
       }
-      return { id, answer, suggested, matches: isMatch, scored, rationale_zh: "简短依据" };
+      return { id, answer, suggested, matches: isMatch, scored, rationale_en: "Summary A is more faithful to the source." };
     });
     return {
       id: `task-${itemIndex + 1}`,
       number: itemIndex + 1,
       qualification_id: `Q${String(itemIndex + 1).padStart(2, "0")}`,
       dataset: itemIndex < 5 ? "cnndm" : "gumsum",
-      title_zh: `Article ${itemIndex + 1}`,
+      title_en: `Synthetic article ${itemIndex + 1}`,
       dimensions,
     };
   });
@@ -119,6 +121,8 @@ function makeResults({ matched = 15, state = "passed" } = {}) {
   return {
     version: QUALIFICATION_KEY_VERSION,
     policy_version: WORKFLOW_VERSION,
+    feedback_language: QUALIFICATION_FEEDBACK_LANGUAGE,
+    feedback_version: QUALIFICATION_FEEDBACK_VERSION,
     confirmed_scored_count: 18,
     key_status: QUALIFICATION_KEY_STATUS,
     state,
@@ -217,8 +221,25 @@ test("qualification results validate the hidden-until-complete 18-cell score and
   assert.equal(qualificationResultsReady(mismatchedCell), false);
 
   const noOptionalRationale = structuredClone(results);
-  delete noOptionalRationale.items[0].dimensions[0].rationale_zh;
-  assert.equal(qualificationResultsReady(noOptionalRationale), true);
+  delete noOptionalRationale.items[0].dimensions[0].rationale_en;
+  assert.equal(qualificationResultsReady(noOptionalRationale), false);
+
+  const legacy = structuredClone(results);
+  delete legacy.feedback_language;
+  delete legacy.feedback_version;
+  for (const item of legacy.items) {
+    item.title_zh = item.title_en;
+    delete item.title_en;
+    for (const dimension of item.dimensions) {
+      dimension.rationale_zh = dimension.rationale_en;
+      delete dimension.rationale_en;
+    }
+  }
+  assert.equal(qualificationResultsReady(legacy), true);
+
+  const partialEnglishMetadata = structuredClone(results);
+  delete partialEnglishMetadata.feedback_version;
+  assert.equal(qualificationResultsReady(partialEnglishMetadata), false);
 });
 
 test("qualification routes retain the private result action and no pre-completion client result path", async () => {

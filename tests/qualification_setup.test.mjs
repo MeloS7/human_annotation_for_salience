@@ -20,9 +20,9 @@ function fixture() {
   const items = Array.from({ length: 10 }, (_, index) => ({
     qualification_id: `Q${String(index + 1).padStart(2, '0')}`,
     dataset: index < 5 ? 'cnndm' : 'gumsum',
-    source_id: `SYNTHETIC_SOURCE_${index}`, title_zh: `合成样例${index}`,
+    source_id: `SYNTHETIC_SOURCE_${index}`, title_zh: `Synthetic sample ${index}`,
     request: 'Synthetic qualification request.',
-    source: `Source ${index}: apostrophe ' and \\ / 中文 / 😺 / $seed$; DROP TABLE marker; -- inert.`,
+    source: `Source ${index}: apostrophe ' and \\ / Ελληνικά / 😺 / $seed$; DROP TABLE marker; -- inert.`,
     reference: `Synthetic reference ${index}.`,
     summary_a: `Synthetic alpha ${index}.`, summary_b: `Synthetic beta ${index}.`,
   }));
@@ -30,7 +30,7 @@ function fixture() {
     qualification_id: item.qualification_id, source_id: item.source_id, dataset: item.dataset,
     gold_suggestions: Object.fromEntries(DIMS.map((id, dimension) => [id, {
       label: dimension % 2 ? 'B' : 'A', scored: positions[index].includes(dimension),
-      confidence: 'high', rationale_zh: 'A优于B；ABC不是选项，Tie不交换。',
+      confidence: 'high', rationale_zh: 'Summary A is stronger than summary B; ABC is not a choice; Tie stays unchanged.',
     }])),
   }));
   return { items, keys };
@@ -68,7 +68,7 @@ test('qualification import remaps both summaries and provisional labels for ever
       const before = original.keys[number - 1].gold_suggestions[id];
       assert.equal(key.suggestions[id].label, swapped ? (before.label === 'A' ? 'B' : 'A') : before.label);
       assert.equal(key.suggestions[id].scored, before.scored);
-      assert.equal(key.suggestions[id].rationale_zh, swapped ? 'B优于A；ABC不是选项，Tie不交换。' : before.rationale_zh);
+      assert.equal(key.suggestions[id].rationale_zh, swapped ? 'Summary B is stronger than summary A; ABC is not a choice; Tie stays unchanged.' : before.rationale_zh);
     }
   }
 });

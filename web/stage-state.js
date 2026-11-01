@@ -12,6 +12,8 @@ export const QUALIFICATION_PROTOCOL = "qualification-required-v2";
 export const QUALIFICATION_KEY_VERSION = "qualification-pilot-20261020-v1";
 export const QUALIFICATION_KEY_STATUS = "human_confirmed_scored";
 export const QUALIFICATION_CONFIRMED_SCORED_COUNT = 18;
+export const QUALIFICATION_FEEDBACK_LANGUAGE = "en";
+export const QUALIFICATION_FEEDBACK_VERSION = "qualification-feedback-en-20261101-v1";
 export const WORKFLOW_VERSION = "qualification-required-20261101-v1";
 export const QUALIFICATION_DIMENSION_IDS = Object.freeze([
   "source_coverage", "reference_coverage", "readability", "faithfulness", "content_focus",
@@ -176,6 +178,10 @@ function percentageMatches(value, matched, total) {
     Math.abs(value - (total ? (100 * matched) / total : 0)) < 0.051;
 }
 
+function validEnglishFeedback(value) {
+  return typeof value === "string" && value.length > 0 && value.trim() === value && /^[\x20-\x7E]+$/.test(value);
+}
+
 export function qualificationResultsReady(results) {
   if (!results || typeof results !== "object" || Array.isArray(results) ||
       typeof results.version !== "string" || !results.version.trim() ||
@@ -186,6 +192,14 @@ export function qualificationResultsReady(results) {
       results.total !== QUALIFICATION_SCORED_TOTAL || results.pass_count !== QUALIFICATION_PASS_COUNT ||
       !percentageMatches(results.percent, results.matched, results.total) ||
       !validCompletedAt(results.evaluated_at)) return false;
+
+  const hasFeedbackLanguage = Object.prototype.hasOwnProperty.call(results, "feedback_language");
+  const hasFeedbackVersion = Object.prototype.hasOwnProperty.call(results, "feedback_version");
+  const hasEnglishFeedbackMetadata = hasFeedbackLanguage || hasFeedbackVersion;
+  if (hasEnglishFeedbackMetadata &&
+      (!hasFeedbackLanguage || !hasFeedbackVersion ||
+       results.feedback_language !== QUALIFICATION_FEEDBACK_LANGUAGE ||
+       results.feedback_version !== QUALIFICATION_FEEDBACK_VERSION)) return false;
 
   const overall = results.overall;
   if (!overall || typeof overall !== "object" || Array.isArray(overall) ||
@@ -224,7 +238,8 @@ export function qualificationResultsReady(results) {
         taskIds.has(item.id) || !Number.isInteger(item.number) || item.number < 1 || item.number > REQUIRED_QUALIFICATION_COUNT ||
         numbers.has(item.number) || !["cnndm", "gumsum"].includes(item.dataset) ||
         typeof item.qualification_id !== "string" || !item.qualification_id.trim() ||
-        typeof item.title_zh !== "string" || !item.title_zh.trim() ||
+        (hasEnglishFeedbackMetadata ? !validEnglishFeedback(item.title_en) :
+          (typeof item.title_zh !== "string" || !item.title_zh.trim())) ||
         !Array.isArray(item.dimensions) || item.dimensions.length !== QUALIFICATION_DIMENSION_IDS.length) return false;
     taskIds.add(item.id);
     numbers.add(item.number);
@@ -235,7 +250,8 @@ export function qualificationResultsReady(results) {
           !VALID_CHOICES.has(answer.answer) || !VALID_CHOICES.has(answer.suggested) ||
           typeof answer.matches !== "boolean" || answer.matches !== (answer.answer === answer.suggested) ||
           typeof answer.scored !== "boolean" ||
-          !(answer.rationale_zh === undefined || answer.rationale_zh === null || typeof answer.rationale_zh === "string")) return false;
+          (hasEnglishFeedbackMetadata ? !validEnglishFeedback(answer.rationale_en) :
+            !(answer.rationale_zh === undefined || answer.rationale_zh === null || typeof answer.rationale_zh === "string"))) return false;
       itemDimensions.add(answer.id);
       if (answer.matches) allMatches.set(answer.id, allMatches.get(answer.id) + 1);
       if (answer.scored) {

@@ -19,7 +19,7 @@ function python(args, input) {
 test('private-import quoting preserves exact text and JSON under PostgreSQL', async () => {
   const samples = [
     "A source with 'single quotes', \\ paths and \noriginal line breaks.",
-    'Unicode: Zoë, Ελληνικά, 中文 and 😺.',
+    'Unicode: Zoë, Ελληνικά and 😺.',
     '<context>Heading</context> Body with $item$ and $guard$ tokens.',
     "'; DROP TABLE materials; -- inert source text",
   ];
@@ -68,7 +68,7 @@ test('private import never overwrites an existing file', async () => {
 });
 
 test('template SQL keeps one exact JSON copy, is idempotent, and refuses changed material', async () => {
-  const sourceText = "Heading\nApostrophe: ' / backslash: \\ / Unicode: ñ, 中文, 😺 / $seed_collision$";
+  const sourceText = "Heading\nApostrophe: ' / backslash: \\ / Unicode: ñ, Ελληνικά, 😺 / $seed_collision$";
   const row = {
     template_id: 'template-synthetic-1',
     kind: 'study',
@@ -129,7 +129,7 @@ from types import SimpleNamespace
 PARTICIPANT_IDS = ('annotator_1', 'annotator_2', 'annotator_3')
 
 def _row(template_id, kind, position):
-    large = ('Exact source text with apostrophe \' and slash \\; Unicode ñ 中文 😺;\n' + 'x' * 6000)
+    large = ('Exact source text with apostrophe \' and slash \\; Unicode ñ Ελληνικά 😺;\n' + 'x' * 6000)
     source = large + f' [{template_id}]'
     payload = {
         'request': f'Request {template_id}', 'source': source,
@@ -211,7 +211,7 @@ test('split private initializer is bounded, atomic, ordered, rerunnable, and fai
     const expected = JSON.parse(await readFile(expectedPath, 'utf8'));
     assert.equal(expected.templates.length, 402);
     const frozenSource = expected.templates.find((row) => row.template_id === 'scheme-1-study-1').payload.source;
-    assert.match(frozenSource, /apostrophe ' and slash \\; Unicode ñ 中文 😺;\n/);
+    assert.match(frozenSource, /apostrophe ' and slash \\; Unicode ñ Ελληνικά 😺;\n/);
 
     const db = new PGlite();
     try {

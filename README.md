@@ -46,8 +46,12 @@ platform adapter boundary, security requirements and acceptance checklist.
 `scripts/build-fixed-packages.py` generates the private packet;
 `scripts/build-fixed-packages-setup.py` prepares an additive private SQL import;
 `scripts/build-mturk-handoff.py` bundles the materials, documentation and a
-credential-free source snapshot for private delivery. The scripts refuse public
-output destinations and never connect to JZ or another data source.
+credential-free source snapshot for private delivery. For English qualification
+presentation, `scripts/build-english-handoff.py` creates a separate derived
+packet from the frozen package directory and the private expanded feedback
+catalog; it leaves the original packet and its historical database audit rows
+unchanged. The scripts refuse public output destinations and never connect to
+JZ or another data source.
 
 The fixed allocation is versioned as `fixed-packages-20261101-v1`. Package claims
 occur only after a qualification pass and survive recovery. Private imports and

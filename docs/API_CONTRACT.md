@@ -160,3 +160,37 @@ The frontend accepts the preceding mandatory-qualification session without an
 allocation field during a rolling deployment. Once present, allocation version,
 state, eligibility and task counts are strictly checked. An unavailable package
 is displayed as unavailable, never as an empty completed study.
+
+## English qualification feedback (presentation-only upgrade)
+
+The English feedback version is `qualification-feedback-en-20261101-v1`. A
+private, additive overlay stores English titles and five rationales for each of
+the thirty existing qualification templates. The three A/B schemes retain their
+own orientation: translated rationales swap standalone A/B identifiers where the
+corresponding summaries are swapped. These translations contain no replacement
+answer labels or scored-cell masks.
+
+The upgrade never updates the frozen templates, qualification keys, policies,
+saved answers, immutable result snapshots, package claims or recovery state.
+The original historical display text remains in private audit records. A
+read-only result projection removes `title_zh` and `rationale_zh` from returned
+qualification feedback and supplies `title_en` and `rationale_en`, with root
+`feedback_language: en` and the feedback version. Scores, choices, suggested
+labels, match flags, scored-cell flags, timestamps and the 14/18 threshold are
+unchanged. Both current and original-score result objects in participant and
+coordinator exports receive the display projection; their stored snapshots are
+not rewritten.
+
+The overlay activates only after its complete private inventory has been
+validated. There is no new public endpoint or direct table access. Feedback
+remains unavailable until all ten qualification comparisons are submitted.
+Before activation the previous result contract remains available, allowing a
+rolling deployment. The frontend can still show its scores and neutral item IDs,
+but does not render untranslated historical titles or rationales. A response
+claiming the English feedback version must contain valid English title/rationale
+fields throughout; partial or mixed-version responses fail validation.
+
+The current private handoff uses English presentation metadata in its scoring
+file and supplies the thirty-template English feedback catalog separately. The
+nine task JSONs, assignment plan and canonical method mapping remain byte-for-byte
+unchanged. Original source-document characters are never translated or removed.

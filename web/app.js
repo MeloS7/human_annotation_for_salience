@@ -4,6 +4,7 @@ const $ = (id) => document.getElementById(id);
 const {
   STAGE_ONE_IDS, QUALIFICATION_DIMENSION_IDS, QUALIFICATION_PASS_COUNT,
   QUALIFICATION_CONFIRMED_SCORED_COUNT,
+  QUALIFICATION_FEEDBACK_LANGUAGE, QUALIFICATION_FEEDBACK_VERSION,
   allStageChoicesPresent, annotationProtocolReady, criteriaForStage, displayAssignmentNumber,
   mayRequestReference, studyAllocationInfo, studyPackageFull,
   qualificationIsComplete, qualificationResultsReady, stageOf, studyGateOpen,
@@ -298,7 +299,11 @@ function renderQualificationResultsPanel(results = null, error = null) {
 
   const passed = results.state === "passed";
   const packageFull = passed && fixedPackageFull();
-  $("qualification-results-summary").textContent = `${passed ? "Passed" : "Not passed"}: ${results.matched} of ${results.total} human-confirmed judgments matched. ${packageFull ? "All nine study packages have already been assigned; please contact the study coordinator." : `At least ${results.pass_count} are required to continue to the study.`} The other 32 AI suggestions are shown for exploration and do not affect the qualification result.`;
+  const hasEnglishFeedback = results.feedback_language === QUALIFICATION_FEEDBACK_LANGUAGE &&
+    results.feedback_version === QUALIFICATION_FEEDBACK_VERSION;
+  const legacyFeedbackNotice = hasEnglishFeedback ? "" :
+    " Item titles and AI-suggested rationales are unavailable for this earlier result.";
+  $("qualification-results-summary").textContent = `${passed ? "Passed" : "Not passed"}: ${results.matched} of ${results.total} human-confirmed judgments matched. ${packageFull ? "All nine study packages have already been assigned; please contact the study coordinator." : `At least ${results.pass_count} are required to continue to the study.`} The other 32 AI suggestions are shown for exploration and do not affect the qualification result.${legacyFeedbackNotice}`;
   const table = $("qualification-results-table");
   const header = document.createElement("tr");
   for (const label of ["Dimension", "Confirmed labels (counted)", "All judgments (incl. 32 exploratory)"]) appendResultCell(header, label, "th");
@@ -323,7 +328,9 @@ function renderQualificationResultsPanel(results = null, error = null) {
     const details = document.createElement("details");
     details.className = "qualification-item-result";
     const summary = document.createElement("summary");
-    summary.textContent = `Q${String(item.number).padStart(2, "0")} · ${item.dataset === "cnndm" ? "CNN/DM" : "GUMSum"} · ${item.title_zh}`;
+    const qualificationId = `Q${String(item.number).padStart(2, "0")}`;
+    const itemLabel = hasEnglishFeedback ? ` · ${item.title_en}` : "";
+    summary.textContent = `${qualificationId} · ${item.dataset === "cnndm" ? "CNN/DM" : "GUMSum"}${itemLabel}`;
     details.append(summary);
     const list = document.createElement("ul");
     for (const dimension of [...item.dimensions].sort((left, right) => QUALIFICATION_DIMENSION_IDS.indexOf(left.id) - QUALIFICATION_DIMENSION_IDS.indexOf(right.id))) {
@@ -332,10 +339,10 @@ function renderQualificationResultsPanel(results = null, error = null) {
       const labelType = dimension.scored ? "human-confirmed label" : "exploratory AI suggestion";
       const prefix = `${QUALIFICATION_LABELS[dimension.id]} — your choice: ${dimension.answer}; ${labelType}: ${dimension.suggested}; ${status}.`;
       line.append(document.createTextNode(prefix));
-      if (typeof dimension.rationale_zh === "string" && dimension.rationale_zh.trim()) {
+      if (hasEnglishFeedback && typeof dimension.rationale_en === "string") {
         const rationale = document.createElement("span");
         rationale.className = "qualification-rationale";
-        rationale.textContent = ` AI-suggested rationale: ${dimension.rationale_zh}`;
+        rationale.textContent = ` AI-suggested rationale: ${dimension.rationale_en}`;
         line.append(rationale);
       }
       list.append(line);
@@ -390,12 +397,35 @@ async function showQualificationResults({ notify = false } = {}) {
   return loadQualificationResults({ notify });
 }
 
+function qualificationResultsDownloadPayload(results) {
+  const hasEnglishFeedback = results.feedback_language === QUALIFICATION_FEEDBACK_LANGUAGE &&
+    results.feedback_version === QUALIFICATION_FEEDBACK_VERSION;
+  return {
+    ...results,
+    items: results.items.map((item) => {
+      const { title_zh: _legacyTitle, ...englishItem } = item;
+      return {
+        ...englishItem,
+        title_en: hasEnglishFeedback && typeof item.title_en === "string"
+          ? item.title_en
+          : `Qualification item Q${String(item.number).padStart(2, "0")}`,
+        dimensions: item.dimensions.map((dimension) => {
+          const { rationale_zh: _legacyRationale, ...englishDimension } = dimension;
+          if (!hasEnglishFeedback) delete englishDimension.rationale_en;
+          return englishDimension;
+        }),
+      };
+    }),
+  };
+}
+
 async function downloadQualificationResults() {
   if (!qualificationResults || !qualificationIsComplete(session)) {
     await loadQualificationResults();
   }
   if (!qualificationResults) return;
-  const blob = new Blob([JSON.stringify(qualificationResults, null, 2)], { type: "application/json" });
+  const downloadResults = qualificationResultsDownloadPayload(qualificationResults);
+  const blob = new Blob([JSON.stringify(downloadResults, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
